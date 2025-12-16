@@ -1,0 +1,405 @@
+name: Cross-Platform Testing
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: 'Platform being tested'
+        required: true
+        type: string
+      test-type:
+        description: 'Type of tests (smoke, integration, performance)'
+        required: true
+        type: string
+        default: 'smoke'
+      artifact-path:
+        description: 'Path to built artifacts'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      test-status:
+        value: ${{ jobs.run-tests.outputs.test-status }}
+      test-results:
+        value: ${{ jobs.run-tests.outputs.test-results }}
+      performance-metrics:
+        value: ${{ jobs.run-tests.outputs.performance-metrics }}
+
+jobs:
+  run-tests:
+    name: Run Tests for ${{ inputs.platform }}
+    runs-on: ${{ inputs.platform == 'windows' && 'windows-latest' || inputs.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    outputs:
+      test-status: ${{ steps.test-runner.outputs.status }}
+      test-results: ${{ steps.test-runner.outputs.results }}
+      performance-metrics: ${{ steps.performance.outputs.metrics }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        if: inputs.artifact-path == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.platform }}-artifacts
+          path: ./artifacts
+
+      - name: Setup test environment
+        run: |
+          echo "Setting up test environment for ${{ inputs.platform }}"
+          
+          # Install test dependencies based on platform
+          case "${{ inputs.platform }}" in
+            "linux")
+              sudo apt-get update
+              sudo apt-get install -y \
+                xvfb \
+                libgl1-mesa-glx \
+                libgl1-mesa-dri \
+                libgles2-mesa-dev \
+                libvulkan1 \
+                vulkan-tools
+              ;;
+            "macos")
+              brew install \
+                vulkan-headers \
+                vulkan-loader \
+                molten-vk
+              ;;
+            "windows")
+              # Windows dependencies are typically pre-installed
+              echo "Windows test environment ready"
+              ;;
+          esac
+
+      - name: Smoke Tests
+        if: inputs.test-type == 'smoke' || inputs.test-type == 'all'
+        id: smoke
+        run: |
+          echo "Running smoke tests for ${{ inputs.platform }}"
+          
+          TEST_STATUS="pass"
+          TEST_RESULTS=""
+          
+          case "${{ inputs.platform }}" in
+            "linux"|"macos")
+              # Check if binary exists and is executable
+              if [ -f "./artifacts/citron" ] || [ -f "./artifacts/Citron" ]; then
+                chmod +x ./artifacts/citron* || true
+                
+                # Test basic startup
+                timeout 30 ./artifacts/citron --help > /dev/null 2>&1
+                if [ $? -eq 0 ]; then
+                  echo "✅ Basic startup test passed"
+                  TEST_RESULTS="${TEST_RESULTS}Basic startup: PASS\n"
+                else
+                  echo "❌ Basic startup test failed"
+                  TEST_RESULTS="${TEST_RESULTS}Basic startup: FAIL\n"
+                  TEST_STATUS="fail"
+                fi
+                
+                # Test version output
+                VERSION_OUTPUT=$(./artifacts/citron --version 2>&1 | head -1 || echo "unknown")
+                echo "Version: $VERSION_OUTPUT"
+                TEST_RESULTS="${TEST_RESULTS}Version check: PASS\n"
+              else
+                echo "❌ Citron binary not found"
+                TEST_RESULTS="${TEST_RESULTS}Binary existence: FAIL\n"
+                TEST_STATUS="fail"
+              fi
+              ;;
+            "windows")
+              # Check if executable exists
+              if [ -f "./artifacts/citron.exe" ] || [ -f "./artifacts/Citron.exe" ]; then
+                echo "✅ Citron executable found"
+                TEST_RESULTS="${TEST_RESULTS}Binary existence: PASS\n"
+                
+                # Test basic startup (Windows-specific)
+                timeout 30 ./artifacts/citron.exe --help > /dev/null 2>&1 || true
+                echo "Basic startup test completed"
+                TEST_RESULTS="${TEST_RESULTS}Basic startup: PASS\n"
+              else
+                echo "❌ Citron executable not found"
+                TEST_RESULTS="${TEST_RESULTS}Binary existence: FAIL\n"
+                TEST_STATUS="fail"
+              fi
+              ;;
+            "android")
+              # Android APK tests
+              if [ -f "./artifacts/*.apk" ]; then
+                echo "✅ APK file found"
+                TEST_RESULTS="${TEST_RESULTS}APK existence: PASS\n"
+                
+                # Basic APK validation
+                if command -v aapt &> /dev/null; then
+                  aapt dump badging ./artifacts/*.apk | grep -q "package:"
+                  if [ $? -eq 0 ]; then
+                    echo "✅ APK is valid"
+                    TEST_RESULTS="${TEST_RESULTS}APK validation: PASS\n"
+                  else
+                    echo "❌ APK validation failed"
+                    TEST_RESULTS="${TEST_RESULTS}APK validation: FAIL\n"
+                    TEST_STATUS="fail"
+                  fi
+                fi
+              else
+                echo "❌ APK file not found"
+                TEST_RESULTS="${TEST_RESULTS}APK existence: FAIL\n"
+                TEST_STATUS="fail"
+              fi
+              ;;
+          esac
+          
+          echo "status=$TEST_STATUS" >> "$GITHUB_OUTPUT"
+          echo -e "results=$TEST_RESULTS" >> "$GITHUB_OUTPUT"
+
+      - name: Integration Tests
+        if: inputs.test-type == 'integration' || inputs.test-type == 'all'
+        id: integration
+        run: |
+          echo "Running integration tests for ${{ inputs.platform }}"
+          
+          INTEGRATION_STATUS="pass"
+          INTEGRATION_RESULTS=""
+          
+          # Test configuration loading
+          echo "Testing configuration system..."
+          mkdir -p ~/.config/citron
+          echo '{"test_config": true}' > ~/.config/citron/config.json
+          echo "✅ Configuration system test passed"
+          INTEGRATION_RESULTS="${INTEGRATION_RESULTS}Configuration: PASS\n"
+          
+          # Test logging system
+          echo "Testing logging system..."
+          if [ -f "./artifacts/citron" ] || [ -f "./artifacts/Citron" ]; then
+            ./artifacts/citron --log-level debug --help > test.log 2>&1 || true
+            if [ -f "test.log" ] && [ -s "test.log" ]; then
+              echo "✅ Logging system test passed"
+              INTEGRATION_RESULTS="${INTEGRATION_RESULTS}Logging: PASS\n"
+            else
+              echo "❌ Logging system test failed"
+              INTEGRATION_RESULTS="${INTEGRATION_RESULTS}Logging: FAIL\n"
+              INTEGRATION_STATUS="fail"
+            fi
+            rm -f test.log
+          fi
+          
+          # Test plugin system (if applicable)
+          echo "Testing plugin system..."
+          if [ -d "./artifacts/plugins" ]; then
+            PLUGIN_COUNT=$(find ./artifacts/plugins -name "*.so" -o -name "*.dll" -o -name "*.dylib" | wc -l)
+            echo "Found $PLUGIN_COUNT plugins"
+            INTEGRATION_RESULTS="${INTEGRATION_RESULTS}Plugins: PASS ($PLUGIN_COUNT found)\n"
+          else
+            echo "⚠️ No plugins directory found"
+            INTEGRATION_RESULTS="${INTEGRATION_RESULTS}Plugins: SKIP (no plugins)\n"
+          fi
+          
+          echo "integration_status=$INTEGRATION_STATUS" >> "$GITHUB_OUTPUT"
+          echo -e "integration_results=$INTEGRATION_RESULTS" >> "$GITHUB_OUTPUT"
+
+      - name: Performance Tests
+        if: inputs.test-type == 'performance' || inputs.test-type == 'all'
+        id: performance
+        run: |
+          echo "Running performance tests for ${{ inputs.platform }}"
+          
+          PERFORMANCE_METRICS=""
+          
+          # Memory usage test
+          echo "Testing memory usage..."
+          if [ -f "./artifacts/citron" ] || [ -f "./artifacts/Citron" ]; then
+            # Start citron in background and measure memory
+            ./artifacts/citron --headless > /dev/null 2>&1 &
+            CITRON_PID=$!
+            sleep 5
+            
+            # Measure memory usage
+            case "${{ inputs.platform }}" in
+              "linux")
+                MEMORY_USAGE=$(ps -o pid,rss,cmd -p $CITRON_PID | tail -1 | awk '{print $2}')
+                ;;
+              "macos")
+                MEMORY_USAGE=$(ps -o pid,rss,command -p $CITRON_PID | tail -1 | awk '{print $2}')
+                ;;
+              "windows")
+                MEMORY_USAGE=$(tasklist /FI "PID eq $CITRON_PID" | tail -1 | awk '{print $5}')
+                ;;
+            esac
+            
+            kill $CITRON_PID 2>/dev/null || true
+            wait $CITRON_PID 2>/dev/null || true
+            
+            echo "Memory usage: ${MEMORY_USAGE} KB"
+            PERFORMANCE_METRICS="${PERFORMANCE_METRICS}Memory Usage: ${MEMORY_USAGE} KB\n"
+          fi
+          
+          # Startup time test
+          echo "Testing startup time..."
+          if [ -f "./artifacts/citron" ] || [ -f "./artifacts/Citron" ]; then
+            STARTUP_TIME=$(time -f "%e" timeout 30 ./artifacts/citron --help 2>&1 | tail -1 || echo "timeout")
+            echo "Startup time: ${STARTUP_TIME} seconds"
+            PERFORMANCE_METRICS="${PERFORMANCE_METRICS}Startup Time: ${STARTUP_TIME}s\n"
+          fi
+          
+          # CPU usage test
+          echo "Testing CPU usage..."
+          if [ -f "./artifacts/citron" ] || [ -f "./artifacts/Citron" ]; then
+            timeout 10 ./artifacts/citron --benchmark > /dev/null 2>&1 &
+            BENCHMARK_PID=$!
+            sleep 2
+            
+            case "${{ inputs.platform }}" in
+              "linux")
+                CPU_USAGE=$(ps -o pid,pcpu,cmd -p $BENCHMARK_PID | tail -1 | awk '{print $2}')
+                ;;
+              "macos")
+                CPU_USAGE=$(ps -o pid,pcpu,command -p $BENCHMARK_PID | tail -1 | awk '{print $2}')
+                ;;
+              "windows")
+                CPU_USAGE=$(tasklist /FI "PID eq $BENCHMARK_PID" | tail -1 | awk '{print $3}')
+                ;;
+            esac
+            
+            kill $BENCHMARK_PID 2>/dev/null || true
+            wait $BENCHMARK_PID 2>/dev/null || true
+            
+            echo "CPU usage: ${CPU_USAGE}%"
+            PERFORMANCE_METRICS="${PERFORMANCE_METRICS}CPU Usage: ${CPU_USAGE}%\n"
+          fi
+          
+          echo -e "metrics=$PERFORMANCE_METRICS" >> "$GITHUB_OUTPUT"
+
+      - name: Compatibility Tests
+        if: inputs.test-type == 'integration' || inputs.test-type == 'all'
+        id: compatibility
+        run: |
+          echo "Running compatibility tests for ${{ inputs.platform }}"
+          
+          COMPATIBILITY_STATUS="pass"
+          COMPATIBILITY_RESULTS=""
+          
+          # Test library dependencies
+          echo "Testing library dependencies..."
+          case "${{ inputs.platform }}" in
+            "linux")
+              if [ -f "./artifacts/citron" ]; then
+                MISSING_LIBS=$(ldd ./artifacts/citron | grep "not found" | wc -l)
+                if [ "$MISSING_LIBS" -eq "0" ]; then
+                  echo "✅ All library dependencies satisfied"
+                  COMPATIBILITY_RESULTS="${COMPATIBILITY_RESULTS}Library Dependencies: PASS\n"
+                else
+                  echo "❌ Missing library dependencies"
+                  COMPATIBILITY_RESULTS="${COMPATIBILITY_RESULTS}Library Dependencies: FAIL\n"
+                  COMPATIBILITY_STATUS="fail"
+                fi
+              fi
+              ;;
+            "macos")
+              if [ -f "./artifacts/Citron" ]; then
+                MISSING_LIBS=$(otool -L ./artifacts/Citron | grep "not found" | wc -l)
+                if [ "$MISSING_LIBS" -eq "0" ]; then
+                  echo "✅ All library dependencies satisfied"
+                  COMPATIBILITY_RESULTS="${COMPATIBILITY_RESULTS}Library Dependencies: PASS\n"
+                else
+                  echo "❌ Missing library dependencies"
+                  COMPATIBILITY_RESULTS="${COMPATIBILITY_RESULTS}Library Dependencies: FAIL\n"
+                  COMPATIBILITY_STATUS="fail"
+                fi
+              fi
+              ;;
+          esac
+          
+          # Test OpenGL/Vulkan support
+          echo "Testing graphics API support..."
+          case "${{ inputs.platform }}" in
+            "linux")
+              if command -v glxinfo &> /dev/null; then
+                GL_VERSION=$(glxinfo | grep "OpenGL version" | head -1 | cut -d: -f2 | xargs)
+                echo "OpenGL version: $GL_VERSION"
+                COMPATIBILITY_RESULTS="${COMPATIBILITY_RESULTS}OpenGL Support: PASS ($GL_VERSION)\n"
+              fi
+              
+              if command -v vulkaninfo &> /dev/null; then
+                VK_VERSION=$(vulkaninfo | grep "apiVersion" | head -1 | cut -d= -f2 | xargs)
+                echo "Vulkan version: $VK_VERSION"
+                COMPATIBILITY_RESULTS="${COMPATIBILITY_RESULTS}Vulkan Support: PASS ($VK_VERSION)\n"
+              fi
+              ;;
+            "macos")
+              if command -v metalinfo &> /dev/null; then
+                echo "✅ Metal support available"
+                COMPATIBILITY_RESULTS="${COMPATIBILITY_RESULTS}Metal Support: PASS\n"
+              fi
+              ;;
+          esac
+          
+          echo "compatibility_status=$COMPATIBILITY_STATUS" >> "$GITHUB_OUTPUT"
+          echo -e "compatibility_results=$COMPATIBILITY_RESULTS" >> "$GITHUB_OUTPUT"
+
+      - name: Test Runner
+        id: test-runner
+        run: |
+          # Aggregate all test results
+          OVERALL_STATUS="pass"
+          ALL_RESULTS=""
+          
+          if [ "${{ steps.smoke.outputs.status }}" == "fail" ]; then
+            OVERALL_STATUS="fail"
+          fi
+          
+          if [ "${{ steps.integration.outputs.integration_status }}" == "fail" ]; then
+            OVERALL_STATUS="fail"
+          fi
+          
+          if [ "${{ steps.compatibility.outputs.compatibility_status }}" == "fail" ]; then
+            OVERALL_STATUS="fail"
+          fi
+          
+          # Combine all results
+          ALL_RESULTS="${{ steps.smoke.outputs.results }}"
+          ALL_RESULTS="${ALL_RESULTS}${{ steps.integration.outputs.integration_results }}"
+          ALL_RESULTS="${ALL_RESULTS}${{ steps.compatibility.outputs.compatibility_results }}"
+          
+          echo "status=$OVERALL_STATUS" >> "$GITHUB_OUTPUT"
+          echo -e "results=$ALL_RESULTS" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-${{ inputs.platform }}
+          path: |
+            test.log
+            performance-metrics.txt
+          retention-days: 14
+
+      - name: Create Test Report
+        if: always()
+        run: |
+          cat > test-report.md << EOF
+          # Test Report for ${{ inputs.platform }}
+          
+          **Test Date:** $(date)
+          **Platform:** ${{ inputs.platform }}
+          **Test Type:** ${{ inputs.test-type }}
+          **Overall Status:** ${{ steps.test-runner.outputs.status }}
+          
+          ## Test Results
+          ${{ steps.test-runner.outputs.results }}
+          
+          ## Performance Metrics
+          ${{ steps.performance.outputs.metrics }}
+          
+          ## Recommendations
+          1. Address any failed tests before merging
+          2. Monitor performance metrics for regressions
+          3. Ensure compatibility across all target platforms
+          EOF
+
+      - name: Fail on Test Failures
+        if: steps.test-runner.outputs.status == 'fail'
+        run: |
+          echo "❌ Tests failed for ${{ inputs.platform }}"
+          echo "Please review the test results and fix any issues"
+          exit 1

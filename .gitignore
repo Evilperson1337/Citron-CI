@@ -1,0 +1,43 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.swp
+*.bak
+
+# Cache directories
+.cache/
+__pycache__/
+*.pyc
+
+# Downloaded dependencies
+downloads/
+externals/
+
+# IDE files
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# CI artifacts
+artifacts/
+temp_repo/
+
+# Package files
+*.deb
+*.rpm
+*.pkg
+*.dmg
+*.exe
+*.msi
