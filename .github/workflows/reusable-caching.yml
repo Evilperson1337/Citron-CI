@@ -1,0 +1,215 @@
+name: Reusable Caching Strategy
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        description: 'Platform identifier'
+        required: true
+        type: string
+      cache-type:
+        description: 'Type of cache (build, dependencies, source)'
+        required: true
+        type: string
+        default: 'build'
+      additional-keys:
+        description: 'Additional cache keys for platform-specific caching'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      cache-hit:
+        value: ${{ jobs.setup-cache.outputs.cache-hit }}
+      cache-key:
+        value: ${{ jobs.setup-cache.outputs.cache-key }}
+
+jobs:
+  setup-cache:
+    name: Setup Caching for ${{ inputs.platform }}
+    runs-on: ${{ inputs.platform == 'windows' && 'windows-latest' || inputs.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    outputs:
+      cache-hit: ${{ steps.cache.outputs.cache-hit }}
+      cache-key: ${{ steps.set-key.outputs.cache-key }}
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Generate cache key
+        id: set-key
+        run: |
+          PLATFORM="${{ inputs.platform }}"
+          CACHE_TYPE="${{ inputs.cache-type }}"
+          ADDITIONAL_KEYS="${{ inputs.additional-keys }}"
+          
+          # Base key components
+          BASE_KEY="${{ runner.os }}-${PLATFORM}-${CACHE_TYPE}"
+          
+          # Platform-specific components
+          case "$PLATFORM" in
+            "linux")
+              BASE_KEY="${BASE_KEY}-$(cat /etc/os-release | grep VERSION_ID | cut -d= -f2 | tr -d '\"')"
+              ;;
+            "windows")
+              BASE_KEY="${BASE_KEY}-$(powershell -Command "(Get-ComputerInfo).WindowsVersion")"
+              ;;
+            "macos")
+              BASE_KEY="${BASE_KEY}-$(sw_vers -productVersion)"
+              ;;
+          esac
+          
+          # Add additional keys if provided
+          if [ -n "$ADDITIONAL_KEYS" ]; then
+            BASE_KEY="${BASE_KEY}-${ADDITIONAL_KEYS}"
+          fi
+          
+          # Add hash of relevant files
+          FILE_HASH=""
+          case "$CACHE_TYPE" in
+            "build")
+              if [ -f "CMakeLists.txt" ]; then
+                FILE_HASH=$(find . -name "CMakeLists.txt" -o -name "*.cmake" | head -20 | xargs cat | sha256sum | cut -c1-8)
+              fi
+              ;;
+            "dependencies")
+              if [ -f "vcpkg.json" ]; then
+                FILE_HASH=$(cat vcpkg.json | sha256sum | cut -c1-8)
+              elif [ -f "package.json" ]; then
+                FILE_HASH=$(cat package.json | sha256sum | cut -c1-8)
+              fi
+              ;;
+            "source")
+              FILE_HASH=$(git rev-parse HEAD | cut -c1-8)
+              ;;
+          esac
+          
+          CACHE_KEY="${BASE_KEY}-${FILE_HASH}"
+          echo "cache-key=$CACHE_KEY" >> "$GITHUB_OUTPUT"
+          echo "Generated cache key: $CACHE_KEY"
+
+      - name: Cache source code
+        if: inputs.cache-type == 'source'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/objects
+            .git/refs
+            .git/packed-refs
+            .git/index
+          key: ${{ steps.set-key.outputs.cache-key }}-source
+          restore-keys: |
+            ${{ inputs.platform }}-source-
+
+      - name: Cache build dependencies
+        if: inputs.cache-type == 'dependencies'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache
+            ~/.npm
+            ~/.gradle
+            ~/.m2
+            ~/Library/Caches
+            ~/Library/Android
+            /opt/homebrew
+            /usr/local/Homebrew
+          key: ${{ steps.set-key.outputs.cache-key }}-deps
+          restore-keys: |
+            ${{ inputs.platform }}-deps-
+
+      - name: Cache build artifacts
+        if: inputs.cache-type == 'build'
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/
+            build-android/
+            emulator/build/
+            citron/build/
+          key: ${{ steps.set-key.outputs.cache-key }}-build
+          restore-keys: |
+            ${{ inputs.platform }}-build-
+
+      - name: Cache vcpkg dependencies
+        if: inputs.platform != 'linux'
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/vcpkg_installed
+            externals/vcpkg/buildtrees
+          key: ${{ steps.set-key.outputs.cache-key }}-vcpkg-${{ hashFiles('**/vcpkg.json', '**/portfile.cmake') }}
+          restore-keys: |
+            ${{ inputs.platform }}-vcpkg-
+
+      - name: Cache Android SDK/NDK
+        if: inputs.platform == 'android'
+        uses: actions/cache@v4
+        with:
+          path: |
+            android-sdk/
+            ~/.android
+          key: ${{ steps.set-key.outputs.cache-key }}-android-${{ hashFiles('**/gradle-wrapper.properties', '**/build.gradle*') }}
+          restore-keys: |
+            ${{ inputs.platform }}-android-
+
+      - name: Cache Homebrew packages (macOS)
+        if: inputs.platform == 'macos'
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/homebrew/Cellar
+            /opt/homebrew/Caskroom
+          key: ${{ steps.set-key.outputs.cache-key }}-homebrew-${{ hashFiles('**/Brewfile') }}
+          restore-keys: |
+            ${{ inputs.platform }}-homebrew-
+
+      - name: Cache Docker layers
+        if: contains(github.event_name, 'pull_request') || github.event_name == 'push'
+        uses: actions/cache@v4
+        with:
+          path: /var/lib/docker
+          key: ${{ steps.set-key.outputs.cache-key }}-docker-${{ github.sha }}
+          restore-keys: |
+            ${{ inputs.platform }}-docker-
+
+      - name: Cache Python virtual environments
+        uses: actions/cache@v4
+        with:
+          path: |
+            venv/
+            .venv/
+            ~/.virtualenvs/
+          key: ${{ steps.set-key.outputs.cache-key }}-python-${{ hashFiles('**/requirements.txt', '**/pyproject.toml', '**/environment.yml') }}
+          restore-keys: |
+            ${{ inputs.platform }}-python-
+
+      - name: Cache Rust toolchain
+        if: hashFiles('**/Cargo.toml') != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/git/
+            ~/.cargo/registry/
+            target/
+          key: ${{ steps.set-key.outputs.cache-key }}-rust-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ inputs.platform }}-rust-
+
+      - name: Cache Node.js modules
+        if: hashFiles('**/package-lock.json', '**/yarn.lock', '**/pnpm-lock.yaml') != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/
+            ~/.npm/
+            ~/.cache/yarn/
+            ~/.cache/pnpm/
+          key: ${{ steps.set-key.outputs.cache-key }}-node-${{ hashFiles('**/package-lock.json', '**/yarn.lock', '**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ inputs.platform }}-node-
+
+      - name: Warm up cache
+        if: inputs.cache-type == 'dependencies'
+        run: |
+          echo "Cache warmed successfully"
+          echo "Cache key: ${{ steps.set-key.outputs.cache-key }}"

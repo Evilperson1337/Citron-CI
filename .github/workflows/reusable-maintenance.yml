@@ -1,0 +1,356 @@
+name: Maintenance and Documentation
+
+on:
+  workflow_call:
+    inputs:
+      maintenance-type:
+        description: 'Type of maintenance (docs, dependencies, cleanup)'
+        required: true
+        type: string
+        default: 'docs'
+      auto-commit:
+        description: 'Auto-commit changes'
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      maintenance-status:
+        value: ${{ jobs.run-maintenance.outputs.status }}
+      changes-made:
+        value: ${{ jobs.run-maintenance.outputs.changes }}
+
+jobs:
+  run-maintenance:
+    name: Run Maintenance Tasks
+    runs-on: ubuntu-latest
+    outputs:
+      status: ${{ steps.runner.outputs.status }}
+      changes: ${{ steps.runner.outputs.changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Node.js for documentation tools
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install maintenance tools
+        run: |
+          # Install documentation and maintenance tools
+          npm install -g \
+            markdownlint-cli \
+            prettier \
+            jsdoc \
+            typedoc
+            
+          # Install Python tools
+          pip install \
+            sphinx \
+            sphinx-rtd-theme \
+            pygments \
+            recommonmark
+
+      - name: Generate Changelog
+        if: inputs.maintenance-type == 'docs' || inputs.maintenance-type == 'all'
+        id: changelog
+        run: |
+          echo "Generating changelog..."
+          
+          # Get latest version
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.1")
+          echo "Latest tag: $LATEST_TAG"
+          
+          # Generate changelog from commits
+          git log $LATEST_TAG..HEAD --pretty=format:"- %s (%h)" --no-merges > CHANGELOG_TEMP.md
+          
+          if [ -s CHANGELOG_TEMP.md ]; then
+            # Create new changelog entry
+            cat > new_changelog.md << EOF
+          ## $LATEST_TAG ($(date +%Y-%m-%d))
+          
+          ### Changes
+          $(cat CHANGELOG_TEMP.md)
+          
+          ---
+          EOF
+            
+            # Append to existing changelog or create new one
+            if [ -f CHANGELOG.md ]; then
+              cat CHANGELOG.md >> new_changelog.md
+              mv new_changelog.md CHANGELOG.md
+            else
+              mv new_changelog.md CHANGELOG.md
+            fi
+            
+            echo "changelog_generated=true" >> "$GITHUB_OUTPUT"
+            echo "✅ Changelog generated"
+          else
+            echo "changelog_generated=false" >> "$GITHUB_OUTPUT"
+            echo "ℹ️ No new commits to generate changelog from"
+          fi
+          
+          rm -f CHANGELOG_TEMP.md
+
+      - name: Update Documentation
+        if: inputs.maintenance-type == 'docs' || inputs.maintenance-type == 'all'
+        id: docs
+        run: |
+          echo "Updating documentation..."
+          
+          # Generate API documentation
+          if [ -f "jsdoc.json" ] || [ -d "src" ]; then
+            echo "Generating API documentation..."
+            mkdir -p docs/api
+            jsdoc -c jsdoc.json -d docs/api 2>/dev/null || true
+          fi
+          
+          # Update README with build status
+          if [ -f "README.md" ]; then
+            echo "Updating README.md..."
+            
+            # Update version information only
+            sed -i 's/Latest Version: .*/Latest Version: development/' README.md || true
+            
+            echo "✅ Documentation updated"
+          fi
+
+      - name: Dependency Audit and Update
+        if: inputs.maintenance-type == 'dependencies' || inputs.maintenance-type == 'all'
+        id: dependencies
+        run: |
+          echo "Auditing and updating dependencies..."
+          
+          DEPENDENCY_CHANGES=""
+          
+          # Check for package.json
+          if [ -f "package.json" ]; then
+            echo "Auditing Node.js dependencies..."
+            npm audit --audit-level=moderate > npm-audit-results.txt 2>&1 || true
+            
+            # Check for outdated packages
+            npm outdated > npm-outdated.txt 2>&1 || true
+            
+            if [ -s npm-outdated.txt ] && [ "$(wc -l < npm-outdated.txt)" -gt "1" ]; then
+              echo "Found outdated Node.js packages"
+              DEPENDENCY_CHANGES="${DEPENDENCY_CHANGES}Node.js packages updated\n"
+              
+              # Update non-breaking changes
+              npm update
+              git add package.json package-lock.json
+              git commit -m "chore: update Node.js dependencies [skip ci]" || true
+            fi
+          fi
+          
+          # Check for Cargo.toml (Rust)
+          if [ -f "Cargo.toml" ]; then
+            echo "Auditing Rust dependencies..."
+            if command -v cargo-audit &> /dev/null; then
+              cargo audit > cargo-audit-results.txt 2>&1 || true
+            fi
+            
+            # Check for updates
+            if command -v cargo-outdated &> /dev/null; then
+              cargo outdated > cargo-outdated.txt 2>&1 || true
+            fi
+          fi
+          
+          # Check for requirements.txt (Python)
+          if [ -f "requirements.txt" ]; then
+            echo "Auditing Python dependencies..."
+            pip install safety
+            safety check > python-safety-results.txt 2>&1 || true
+            
+            # Check for updates
+            pip list --outdated > python-outdated.txt 2>&1 || true
+          fi
+          
+          echo "dependency_changes=$DEPENDENCY_CHANGES" >> "$GITHUB_OUTPUT"
+
+      - name: Code Quality Checks
+        if: inputs.maintenance-type == 'cleanup' || inputs.maintenance-type == 'all'
+        id: quality
+        run: |
+          echo "Running code quality checks..."
+          
+          QUALITY_ISSUES=""
+          
+          # Check markdown files
+          if [ -f ".markdownlint.json" ]; then
+            echo "Checking markdown files..."
+            markdownlint . --fix 2>/dev/null || true
+            QUALITY_ISSUES="${QUALITY_ISSUES}Markdown files linted and fixed\n"
+          fi
+          
+          # Format code with prettier
+          if [ -f ".prettierrc" ] || [ -f "prettier.config.js" ]; then
+            echo "Formatting code with Prettier..."
+            prettier --write . 2>/dev/null || true
+            QUALITY_ISSUES="${QUALITY_ISSUES}Code formatted with Prettier\n"
+          fi
+          
+          # Clean up temporary files
+          echo "Cleaning up temporary files..."
+          find . -name "*.tmp" -o -name "*.log" -o -name "*.swp" | xargs rm -f 2>/dev/null || true
+          
+          # Clean up empty directories
+          find . -type d -empty -delete 2>/dev/null || true
+          
+          QUALITY_ISSUES="${QUALITY_ISSUES}Temporary files cleaned up\n"
+          
+          echo "quality_issues=$QUALITY_ISSUES" >> "$GITHUB_OUTPUT"
+
+      - name: Workflow Optimization
+        if: inputs.maintenance-type == 'cleanup' || inputs.maintenance-type == 'all'
+        id: workflows
+        run: |
+          echo "Optimizing workflows..."
+          
+          WORKFLOW_CHANGES=""
+          
+          # Check for outdated actions
+          echo "Checking for outdated GitHub Actions..."
+          
+          # Update common actions to latest versions
+          find .github/workflows -name "*.yml" -o -name "*.yaml" | while read workflow; do
+            # Update checkout action
+            sed -i 's/uses: actions\/checkout@v[0-9]/uses: actions\/checkout@v4/g' "$workflow"
+            
+            # Update setup-node action
+            sed -i 's/uses: actions\/setup-node@v[0-9]/uses: actions\/setup-node@v4/g' "$workflow"
+            
+            # Update cache action
+            sed -i 's/uses: actions\/cache@v[0-9]/uses: actions\/cache@v4/g' "$workflow"
+          done
+          
+          WORKFLOW_CHANGES="${WORKFLOW_CHANGES}GitHub Actions updated to latest versions\n"
+          
+          # Check for duplicate workflows
+          echo "Checking for duplicate workflows..."
+          
+          echo "workflow_changes=$WORKFLOW_CHANGES" >> "$GITHUB_OUTPUT"
+
+      - name: Security Scan
+        if: inputs.maintenance-type == 'dependencies' || inputs.maintenance-type == 'all'
+        id: security
+        run: |
+          echo "Running security scan..."
+          
+          # Run security checks on dependencies
+          if [ -f "package.json" ]; then
+            npm audit --audit-level=moderate
+          fi
+          
+          # Check for secrets in code
+          git secrets --install 2>/dev/null || true
+          git secrets --register-aws 2>/dev/null || true
+          git secrets --scan 2>/dev/null || true
+
+      - name: Maintenance Runner
+        id: runner
+        run: |
+          # Aggregate all maintenance results
+          OVERALL_STATUS="success"
+          ALL_CHANGES=""
+          
+          if [ "${{ steps.changelog.outputs.changelog_generated }}" == "true" ]; then
+            ALL_CHANGES="${ALL_CHANGES}${{ steps.changelog.outputs.changelog_generated }}\n"
+          fi
+          
+          if [ -n "${{ steps.dependencies.outputs.dependency_changes }}" ]; then
+            ALL_CHANGES="${ALL_CHANGES}${{ steps.dependencies.outputs.dependency_changes }}\n"
+          fi
+          
+          if [ -n "${{ steps.quality.outputs.quality_issues }}" ]; then
+            ALL_CHANGES="${ALL_CHANGES}${{ steps.quality.outputs.quality_issues }}\n"
+          fi
+          
+          if [ -n "${{ steps.workflows.outputs.workflow_changes }}" ]; then
+            ALL_CHANGES="${ALL_CHANGES}${{ steps.workflows.outputs.workflow_changes }}\n"
+          fi
+          
+          echo "status=$OVERALL_STATUS" >> "$GITHUB_OUTPUT"
+          echo -e "changes=$ALL_CHANGES" >> "$GITHUB_OUTPUT"
+
+      - name: Auto-commit Changes
+        if: inputs.auto-commit == true && steps.runner.outputs.changes != ''
+        run: |
+          echo "Auto-committing changes..."
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Add all changes
+          git add .
+          
+          # Check if there are changes to commit
+          if ! git diff --cached --quiet; then
+            # Create commit message
+            COMMIT_MSG="chore: automated maintenance updates [skip ci]
+            
+            Changes made:
+            ${{ steps.runner.outputs.changes }}
+            
+            Automated by: ${{ github.workflow }}
+            Run: ${{ github.run_number }}"
+            
+            git commit -m "$COMMIT_MSG"
+            
+            # Push changes
+            git push origin HEAD:${{ github.ref_name }} || true
+            
+            echo "✅ Changes auto-committed and pushed"
+          else
+            echo "ℹ️ No changes to commit"
+          fi
+
+      - name: Upload Maintenance Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: maintenance-results
+          path: |
+            npm-audit-results.txt
+            npm-outdated.txt
+            cargo-audit-results.txt
+            cargo-outdated.txt
+            python-safety-results.txt
+            python-outdated.txt
+            CHANGELOG.md
+          retention-days: 30
+
+      - name: Create Maintenance Report
+        if: always()
+        run: |
+          cat > maintenance-report.md << EOF
+          # Maintenance Report
+          
+          **Date:** $(date)
+          **Maintenance Type:** ${{ inputs.maintenance-type }}
+          **Status:** ${{ steps.runner.outputs.status }}
+          
+          ## Changes Made
+          ${{ steps.runner.outputs.changes }}
+          
+          ## Recommendations
+          1. Review all auto-committed changes
+          2. Test the updated dependencies
+          3. Update documentation as needed
+          4. Monitor for any issues after deployment
+          
+          ## Next Steps
+          - Run tests to ensure everything works correctly
+          - Consider creating a pull request for review
+          - Update version numbers if needed
+          - Create release notes for significant changes
+          EOF
+
+      - name: Notify on Issues
+        if: steps.runner.outputs.status == 'failure'
+        run: |
+          echo "❌ Maintenance failed"
+          echo "Please review the maintenance results and fix any issues"

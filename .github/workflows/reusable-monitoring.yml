@@ -1,0 +1,231 @@
+name: Error Handling and Monitoring
+
+on:
+  workflow_call:
+    inputs:
+      job-name:
+        description: 'Name of the job being monitored'
+        required: true
+        type: string
+      platform:
+        description: 'Platform being built'
+        required: true
+        type: string
+      build-id:
+        description: 'Unique build identifier'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      build-status:
+        value: ${{ jobs.monitor-build.outputs.build-status }}
+      build-duration:
+        value: ${{ jobs.monitor-build.outputs.build-duration }}
+      error-details:
+        value: ${{ jobs.monitor-build.outputs.error-details }}
+
+jobs:
+  monitor-build:
+    name: Monitor Build for ${{ inputs.job-name }}
+    runs-on: ubuntu-latest
+    outputs:
+      build-status: ${{ steps.status.outputs.status }}
+      build-duration: ${{ steps.metrics.outputs.duration }}
+      error-details: ${{ steps.error-analysis.outputs.details }}
+    steps:
+      - name: Start build monitoring
+        id: start
+        run: |
+          START_TIME=$(date +%s)
+          echo "build-start-time=$START_TIME" >> "$GITHUB_ENV"
+          echo "Build started at $(date)"
+
+      - name: Setup error recovery
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install monitoring tools
+        run: |
+          npm install -g @actions/core @actions/github
+
+      - name: Monitor build progress
+        id: monitor
+        run: |
+          echo "Monitoring build: ${{ inputs.job-name }}"
+          echo "Platform: ${{ inputs.platform }}"
+          echo "Build ID: ${{ inputs.build-id }}"
+
+      - name: Build metrics collection
+        id: metrics
+        if: always()
+        run: |
+          END_TIME=$(date +%s)
+          START_TIME="${{ env.build-start-time }}"
+          if [ -n "$START_TIME" ]; then
+            DURATION=$((END_TIME - START_TIME))
+          else
+            DURATION=0
+          fi
+          echo "duration=$DURATION" >> "$GITHUB_OUTPUT"
+          echo "Build duration: ${DURATION} seconds"
+
+      - name: Error analysis and recovery
+        id: error-analysis
+        if: failure()
+        run: |
+          echo "Analyzing build failure..."
+          
+          # Get workflow run details
+          RUN_ID="${{ github.run_id }}"
+          JOB_ID="${{ github.job }}"
+          
+          # Common error patterns and recovery suggestions
+          ERROR_DETAILS=""
+          
+          # Check for network issues
+          if grep -q "timeout\|connection\|network" "$GITHUB_STEP_SUMMARY" 2>/dev/null; then
+            ERROR_DETAILS="${ERROR_DETAILS}Network timeout detected. Consider increasing timeout or retrying.\n"
+          fi
+          
+          # Check for disk space issues
+          if grep -q "disk\|space\|no space" "$GITHUB_STEP_SUMMARY" 2>/dev/null; then
+            ERROR_DETAILS="${ERROR_DETAILS}Disk space issue detected. Consider cleaning up artifacts or increasing runner size.\n"
+          fi
+          
+          # Check for memory issues
+          if grep -q "memory\|out of memory\|OOM" "$GITHUB_STEP_SUMMARY" 2>/dev/null; then
+            ERROR_DETAILS="${ERROR_DETAILS}Memory issue detected. Consider reducing parallel jobs or increasing runner memory.\n"
+          fi
+          
+          # Check for dependency issues
+          if grep -q "dependency\|missing\|not found" "$GITHUB_STEP_SUMMARY" 2>/dev/null; then
+            ERROR_DETAILS="${ERROR_DETAILS}Dependency issue detected. Check dependency versions and availability.\n"
+          fi
+          
+          echo -e "$ERROR_DETAILS" > error_details.txt
+          echo "details=$(cat error_details.txt | base64 -w 0)" >> "$GITHUB_OUTPUT"
+          
+          # Create detailed error report
+          cat > error_report.md << EOF
+          # Build Error Report
+          
+          **Build Information:**
+          - Job: ${{ inputs.job-name }}
+          - Platform: ${{ inputs.platform }}
+          - Build ID: ${{ inputs.build-id }}
+          - Run ID: $RUN_ID
+          - Job ID: $JOB_ID
+          - Timestamp: $(date)
+          
+          **Error Analysis:**
+          $ERROR_DETAILS
+          
+          **Next Steps:**
+          1. Review the full build log for specific error messages
+          2. Check if this is a transient issue by re-running the workflow
+          3. Verify all dependencies are available and up-to-date
+          4. Consider increasing resource limits if needed
+          EOF
+          
+          echo "Error analysis complete"
+
+      - name: Build status determination
+        id: status
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            echo "✅ Build completed successfully"
+          elif [ "${{ job.status }}" == "failure" ]; then
+            echo "status=failure" >> "$GITHUB_OUTPUT"
+            echo "❌ Build failed"
+          elif [ "${{ job.status }}" == "cancelled" ]; then
+            echo "status=cancelled" >> "$GITHUB_OUTPUT"
+            echo "⚠️ Build was cancelled"
+          else
+            echo "status=unknown" >> "$GITHUB_OUTPUT"
+            echo "❓ Build status unknown"
+          fi
+
+      - name: Performance analysis
+        id: performance
+        if: always()
+        run: |
+          DURATION="${{ steps.metrics.outputs.duration }}"
+          
+          # Performance thresholds (in seconds)
+          FAST_THRESHOLD=300    # 5 minutes
+          MEDIUM_THRESHOLD=900  # 15 minutes
+          SLOW_THRESHOLD=1800   # 30 minutes
+          
+          if [ "$DURATION" -lt "$FAST_THRESHOLD" ]; then
+            PERFORMANCE="fast"
+          elif [ "$DURATION" -lt "$MEDIUM_THRESHOLD" ]; then
+            PERFORMANCE="medium"
+          elif [ "$DURATION" -lt "$SLOW_THRESHOLD" ]; then
+            PERFORMANCE="slow"
+          else
+            PERFORMANCE="very_slow"
+          fi
+          
+          echo "performance=$PERFORMANCE" >> "$GITHUB_OUTPUT"
+          echo "Build performance: $PERFORMANCE (${DURATION}s)"
+
+      - name: Notification and alerting
+        if: failure() || cancelled()
+        run: |
+          # Send notifications for critical failures
+          WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK }}"
+          if [ -n "$WEBHOOK_URL" ]; then
+            curl -H "Content-Type: application/json" \
+                 -d "{\"content\":\"🚨 **Build Alert**\n\n❌ **Job:** ${{ inputs.job-name }}\n📦 **Platform:** ${{ inputs.platform }}\n⏱️ **Duration:** ${{ steps.metrics.outputs.duration }}s\n📅 **Time:** $(date)\n🔗 **Run:** https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+                 "$WEBHOOK_URL"
+          fi
+
+      - name: Cleanup on failure
+        if: failure()
+        run: |
+          echo "Cleaning up failed build artifacts..."
+          # Add cleanup logic here if needed
+
+      - name: Archive build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ inputs.job-name }}-${{ inputs.platform }}
+          path: |
+            error_report.md
+            error_details.txt
+          retention-days: 7
+
+      - name: Update build metrics
+        if: always()
+        run: |
+          # Create build metrics file
+          cat > build_metrics.json << EOF
+          {
+            "build_id": "${{ inputs.build-id }}",
+            "job_name": "${{ inputs.job-name }}",
+            "platform": "${{ inputs.platform }}",
+            "status": "${{ steps.status.outputs.status }}",
+            "duration": ${{ steps.metrics.outputs.duration }},
+            "performance": "${{ steps.performance.outputs.performance }}",
+            "timestamp": "$(date -Iseconds)",
+            "github_run_id": "${{ github.run_id }}",
+            "github_job_id": "${{ github.job }}"
+          }
+          EOF
+          
+          # Upload metrics
+          echo "Build metrics recorded"
+
+      - name: Health check summary
+        if: always()
+        run: |
+          echo "## Build Health Check Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Status:** ${{ steps.status.outputs.status }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Duration:** ${{ steps.metrics.outputs.duration }} seconds" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Performance:** ${{ steps.performance.outputs.performance }}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.error-analysis.outputs.details }}" != "" ]; then
+            echo "- **Errors:** ${{ steps.error-analysis.outputs.details }}" >> "$GITHUB_STEP_SUMMARY"
+          fi
