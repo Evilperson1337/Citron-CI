@@ -39,6 +39,7 @@ jobs:
         run: |
           git clone --depth 1 https://git.citron-emu.org/Citron/Emulator.git temp_repo
           cd temp_repo
+          git fetch --tags
           LATEST_TAG=$(git describe --tags --abbrev=0)
           VERSION=${LATEST_TAG#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -456,8 +457,8 @@ jobs:
           
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           chmod +x ./gradlew
-          BUILD_ARGS="-PCITRON_ANDROID_ARGS=\"-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DENABLE_UPDATE_CHECKER=ON\""
-          ./gradlew assembleMainlineRelease $BUILD_ARGS
+          BUILD_ARGS=(-PCITRON_ANDROID_ARGS "-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DENABLE_UPDATE_CHECKER=ON")
+          ./gradlew assembleMainlineRelease "${BUILD_ARGS[@]}"
           
           APK_PATH=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
