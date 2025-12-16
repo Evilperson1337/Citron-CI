@@ -9,6 +9,9 @@ on:
     - cron: "0 14 * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   check-version:
     name: Check if new version available
@@ -17,6 +20,7 @@ jobs:
       should_build: ${{ steps.compare.outputs.should_build }}
       new_hash: ${{ steps.upstream.outputs.hash_short }}
       new_hash_full: ${{ steps.upstream.outputs.hash_full }}
+      new_version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v4
@@ -25,9 +29,18 @@ jobs:
         run: |
           REPO_URL="https://git.citron-emu.org/Citron/Emulator.git"
           FULL_HASH=$(git ls-remote "$REPO_URL" HEAD | cut -f1)
-          SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-7)
+          SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-8)
           echo "hash_short=$SHORT_HASH" >> $GITHUB_OUTPUT
           echo "hash_full=$FULL_HASH" >> $GITHUB_OUTPUT
+
+      - name: Get latest version
+        id: version
+        run: |
+          git clone --depth 1 https://git.citron-emu.org/Citron/Emulator.git temp_repo
+          cd temp_repo
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          VERSION=${LATEST_TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
       - name: Get last built version
         id: last_built
         run: |
@@ -104,9 +117,10 @@ jobs:
         id: version
         working-directory: ./citron
         run: |
-          git fetch --tags
-          VERSION=$(git rev-parse --short HEAD)
+          VERSION="${{ needs.check-version.outputs.new_version }}"
+          HASH="${{ needs.check-version.outputs.new_hash }}"
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "HASH=${HASH}" >> $GITHUB_OUTPUT
 
       - name: Set up Python 3.12 venv
         working-directory: ./citron
@@ -116,6 +130,16 @@ jobs:
           pip install jsonschema jinja2
           echo "VIRTUAL_ENV=$PWD/venv" >> $GITHUB_ENV
           echo "$PWD/venv/bin" >> $GITHUB_PATH
+
+      - name: Cache Build Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            citron/build
+            citron/externals
+          key: macos-build-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt', '**/vcpkg.json') }}
+          restore-keys: |
+            macos-build-${{ runner.os }}-
 
       - name: Configure CMake
         working-directory: ./citron
@@ -277,7 +301,7 @@ jobs:
 
           # Step 8: Create the final DMG
           echo "Creating final DMG..."
-          DMG_FILENAME="Citron-macOS-nightly-${{ steps.version.outputs.VERSION }}.dmg"
+          DMG_FILENAME="Citron-v${{ steps.version.outputs.VERSION }}-nightly.${{ steps.version.outputs.HASH }}-macos-amd64.dmg"
           hdiutil create -fs HFS+ -srcfolder "$APP_BUNDLE_PATH" -volname "Citron Nightly" "./$DMG_FILENAME"
           mv "$DMG_FILENAME" ./dist/
 

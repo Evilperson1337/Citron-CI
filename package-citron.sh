@@ -2,14 +2,34 @@
 set -ex
 ARCH="${ARCH:-$(uname -m)}"
 
-# The VERSION is now passed as an environment variable from the workflow
-if [ -z "$APP_VERSION" ]; then
-    echo "Error: APP_VERSION environment variable is not set."
+# The VERSION and HASH are now passed as environment variables from the workflow
+if [ -z "$VERSION" ]; then
+    echo "Error: VERSION environment variable is not set."
     exit 1
 fi
 
+if [ -z "$HASH" ]; then
+    echo "Error: HASH environment variable is not set."
+    exit 1
+fi
+
+# Map ARCH to standard names
+if [ "$ARCH" = "x86_64" ]; then
+  ARCH_NAME="amd64"
+elif [ "$ARCH" = "aarch64" ]; then
+  ARCH_NAME="arm64"
+else
+  ARCH_NAME="$ARCH"
+fi
+
+# Set modifiers
+MODIFIERS=""
+if [ "$ARCH_SUFFIX" = "_v3" ]; then
+  MODIFIERS="-v3"
+fi
+
 # Construct unique names for the AppImage and tarball based on the build matrix.
-OUTNAME_BASE="citron_nightly-${APP_VERSION}-linux-${ARCH}${ARCH_SUFFIX}"
+OUTNAME_BASE="Citron-v${VERSION}-nightly.${HASH}-linux-${ARCH_NAME}${MODIFIERS}"
 export OUTNAME_APPIMAGE="${OUTNAME_BASE}.AppImage"
 export OUTNAME_TAR="${OUTNAME_BASE}.tar.zst"
 
@@ -34,7 +54,7 @@ mkdir -p ./AppDir/usr/share/qt6
 cp -r /usr/share/qt6/translations ./AppDir/usr/share/qt6/
 
 if [ "$DEVEL" = 'true' ]; then
-	sed -i 's|Name=citron|Name=citron nightly|' ./AppDir/*.desktop
+	sed -i 's|Name=citron|Name=Citron nightly|' ./AppDir/*.desktop
 fi
 
 echo 'SHARUN_ALLOW_SYS_VK_ICD=1' > ./AppDir/.env

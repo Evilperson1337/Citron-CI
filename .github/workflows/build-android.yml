@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: "0 12 * * *"
 
+permissions:
+  contents: read
+
 jobs:
   check-version:
     name: Check if new version available
@@ -14,6 +17,7 @@ jobs:
       new_hash: ${{ steps.upstream.outputs.hash_short }}
       new_hash_full: ${{ steps.upstream.outputs.hash_full }}
       branch_name: ${{ steps.branch_check.outputs.branch_name }}
+      new_version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout this repo
@@ -35,7 +39,7 @@ jobs:
             echo "⚠️ Feature branch not found, falling back to: $BRANCH_NAME"
           fi
 
-          SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-7)
+          SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-8)
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "hash_short=$SHORT_HASH" >> $GITHUB_OUTPUT
           echo "hash_full=$FULL_HASH" >> $GITHUB_OUTPUT
@@ -48,6 +52,15 @@ jobs:
           echo "hash_short=${{ steps.branch_check.outputs.hash_short }}" >> $GITHUB_OUTPUT
           echo "hash_full=${{ steps.branch_check.outputs.hash_full }}" >> $GITHUB_OUTPUT
           echo "Upstream short: ${{ steps.branch_check.outputs.hash_short }}"
+
+      - name: Get latest version
+        id: version
+        run: |
+          git clone --depth 1 --branch ${{ steps.branch_check.outputs.branch_name }} https://git.citron-emu.org/Citron/Emulator.git temp_repo
+          cd temp_repo
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          VERSION=${LATEST_TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Get last built version
         id: last_built
@@ -195,11 +208,23 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleMainlineRelease -Pcmake.args="-DENABLE_WEB_SERVICE=OFF -DENABLE_OPENSSL=OFF"
 
+      - name: Rename APK
+        working-directory: ./citron_source/src/android
+        run: |
+          APK_PATH=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::Build failed: No APK file was found."
+            exit 1
+          fi
+          mkdir -p artifacts
+          APK_NAME="Citron-v${{ needs.check-version.outputs.new_version }}-nightly.${{ needs.check-version.outputs.new_hash }}-android-arm64-release.apk"
+          mv "$APK_PATH" "artifacts/$APK_NAME.apk"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: citron-android-nightly
-          path: citron_source/src/android/app/build/outputs/apk/mainline/release/*.apk
+          path: citron_source/src/android/artifacts/*.apk
 
   build-android-8elite:
     name: Build Android APK (Snapdragon 8 Elite)
@@ -342,7 +367,7 @@ jobs:
         run: |
           # The git command needs to run from the cloned git repo to get the correct commit count
           COUNT="$(git -C ../.. rev-list --count HEAD)"
-          APK_NAME="Citron-${COUNT}-Android-${MODEL}-${TARGET}"
+          APK_NAME="Citron-v${{ needs.check-version.outputs.new_version }}-nightly.${{ needs.check-version.outputs.new_hash }}-android-arm64-snapdragon.apk"
           
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           chmod +x ./gradlew

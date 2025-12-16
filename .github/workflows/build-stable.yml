@@ -1,0 +1,52 @@
+name: Build Citron (Stable)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: "Build Stable ${{ matrix.platform }}"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            container: ghcr.io/pkgforge-dev/archlinux:latest
+          - platform: macos
+            runner: macos-latest
+          - platform: windows
+            runner: windows-11-arm
+          - platform: android
+            runner: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get Version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      # Copy build steps from build-all.yml, adapted for stable
+
+      - name: Install Git (Linux)
+        if: matrix.platform == 'linux'
+        run: pacman -Syu --noconfirm --needed git
+
+      - name: Clone Citron Source (Non-Linux)
+        if: matrix.platform != 'linux'
+        run: |
+          git clone --recursive "https://git.citron-emu.org/Citron/Emulator.git" citron
+
+      # Add platform-specific build steps similar to build-all, but set DEVEL=false
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref }}
+          files: "**/*"

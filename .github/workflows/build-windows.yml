@@ -9,6 +9,9 @@ on:
     - cron: "0 12 * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   check-version:
     name: Check if new version available
@@ -17,6 +20,7 @@ jobs:
       should_build: ${{ steps.compare.outputs.should_build }}
       new_hash: ${{ steps.upstream.outputs.hash_short }}
       new_hash_full: ${{ steps.upstream.outputs.hash_full }}
+      new_version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v4
@@ -25,9 +29,18 @@ jobs:
         run: |
           REPO_URL="https://git.citron-emu.org/Citron/Emulator.git"
           FULL_HASH=$(git ls-remote "$REPO_URL" HEAD | cut -f1)
-          SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-7)
+          SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-8)
           echo "hash_short=$SHORT_HASH" >> $GITHUB_OUTPUT
           echo "hash_full=$FULL_HASH" >> $GITHUB_OUTPUT
+
+      - name: Get latest version
+        id: version
+        run: |
+          git clone --depth 1 https://git.citron-emu.org/Citron/Emulator.git temp_repo
+          cd temp_repo
+          LATEST_TAG=$(git describe --tags --abbrev=0)
+          VERSION=${LATEST_TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
       - name: Get last built version
         id: last_built
         run: |
@@ -148,9 +161,10 @@ jobs:
         working-directory: ./citron
         shell: bash
         run: |
-          git fetch --tags
-          VERSION=$(git rev-parse --short HEAD)
+          VERSION="${{ needs.check-version.outputs.new_version }}"
+          HASH="${{ needs.check-version.outputs.new_hash }}"
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          echo "HASH=${HASH}" >> $GITHUB_OUTPUT
 
       - name: Configure CMake
         working-directory: ./citron
@@ -268,7 +282,7 @@ jobs:
               exit 1
           }
           New-Item -ItemType Directory -Path ".\dist" -Force
-          $zip_file = ".\dist\Citron-windows-nightly-${{ steps.version.outputs.VERSION }}-ARM64.zip"
+          $zip_file = ".\dist\Citron-v${{ steps.version.outputs.VERSION }}-nightly.${{ steps.version.outputs.HASH }}-windows-arm64.zip"
           Compress-Archive -Path "$pkg_dir\*" -DestinationPath $zip_file -Force
           # Correct PowerShell syntax to set the GitHub Actions output
           echo "zip_name=$zip_file" | Out-File -FilePath $env:GITHUB_OUTPUT -Append

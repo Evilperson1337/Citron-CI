@@ -4,18 +4,21 @@
 [![Build Citron (Android)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-android.yml/badge.svg)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-android.yml)
 [![Build Citron (Windows)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-windows.yml)
 [![Build Citron (Linux)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-linux.yml)
+[![Build Citron (macOS)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-macos.yml/badge.svg)](https://github.com/Zephyron-Dev/Citron-CI/actions/workflows/build-macos.yml)
 
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Zephyron-Dev/Citron-CI&type=date&legend=top-left)](https://www.star-history.com/#Zephyron-Dev/Citron-CI&type=date&legend=top-left)
 
-This repository makes Nightly builds for **x86_64** (generic) and **x86_64_v3** on Linux, and also Windows & Android builds! If your CPU is less than 10 years old, for Linux, use the x86_64_v3 build since it has a significant performance boost. These builds are all produced @ 12 AM UTC every single day.
+This repository makes Nightly builds for **x86_64** (generic) and **x86_64_v3** on Linux, Windows, macOS, and Android! If your CPU is less than 10 years old, for Linux, use the x86_64_v3 build since it has a significant performance boost. These builds are all produced @ 12 AM UTC every single day.
 
 * [Latest Commits Can Be Found Here](https://git.citron-emu.org/Citron/Emulator/commits/branch/main)
 
 * [Latest Android Nightly Release](https://github.com/Zephyron-Dev/Citron-CI/releases/tag/nightly-android)
 
 * [Latest Linux Nightly Release](https://github.com/Zephyron-Dev/Citron-CI/releases/tag/nightly-linux)
+
+* [Latest macOS Nightly Release](https://github.com/Zephyron-Dev/Citron-CI/releases/tag/nightly-macos)
 
 * [Latest Windows Nightly Release](https://github.com/Zephyron-Dev/Citron-CI/releases/tag/nightly-windows)
 
