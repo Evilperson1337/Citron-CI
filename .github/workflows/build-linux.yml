@@ -31,8 +31,8 @@ jobs:
           REPO_URL="https://git.citron-emu.org/Citron/Emulator.git"
           FULL_HASH=$(git ls-remote "$REPO_URL" HEAD | cut -f1)
           SHORT_HASH=$(echo "$FULL_HASH" | cut -c1-8)
-          echo "hash_short=$SHORT_HASH" >> $GITHUB_OUTPUT
-          echo "hash_full=$FULL_HASH" >> $GITHUB_OUTPUT
+          echo "hash_short=$SHORT_HASH" >> "$GITHUB_OUTPUT"
+          echo "hash_full=$FULL_HASH" >> "$GITHUB_OUTPUT"
           echo "Upstream hash short: $SHORT_HASH"
           echo "Upstream hash full:  $FULL_HASH"
 
@@ -43,23 +43,23 @@ jobs:
           cd temp_repo
           LATEST_TAG=$(git describe --tags --abbrev=0)
           VERSION=${LATEST_TAG#v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Get last built version
         id: last_built
         run: |
           LAST_HASH=$(cat LATEST_VERSION | tr -d '\n' || echo "none")
-          echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
+          echo "last_hash=$LAST_HASH" >> "$GITHUB_OUTPUT"
           echo "Last built hash: $LAST_HASH"
 
       - name: Check if release exists
         id: release_check
         run: |
           if gh release view nightly-linux --repo "${{ github.repository }}" > /dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release exists"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Release does not exist"
           fi
         env:
@@ -70,13 +70,13 @@ jobs:
         id: compare
         run: |
           if [ "${{ steps.upstream.outputs.hash_short }}" != "${{ steps.last_built.outputs.last_hash }}" ]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "✅ New version detected - will build"
           elif [ "${{ steps.release_check.outputs.exists }}" != "true" ]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "✅ No release exists - will build"
           else
-            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
             echo "⏭️ No changes - skipping build"
           fi
 
