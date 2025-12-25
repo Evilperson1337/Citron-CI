@@ -8,6 +8,7 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
+HASH="${HASH:-$VERSION}"
 if [ -z "$HASH" ]; then
     echo "Error: HASH environment variable is not set."
     exit 1
