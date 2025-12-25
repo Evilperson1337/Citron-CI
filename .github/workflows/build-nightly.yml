@@ -1,0 +1,536 @@
+# ==============================================================================
+# CITRON NIGHTLY BUILD WORKFLOW
+# ==============================================================================
+# This workflow builds Citron for all supported platforms (Linux, Windows,
+# macOS, Android) and publishes them as a single unified nightly release.
+#
+# KEY FEATURES:
+# - Centralized artifact naming: Citron-Nightly_<hash>-<os>-<arch>.<ext>
+# - Single continuously-updated release tag: citron-nightly
+# - Parallel multi-platform builds with fail-fast disabled
+# - Automatic version detection and build skipping for unchanged commits
+# - Automated release notes generation from ci/NIGHTLY_RELEASE_TEMPLATE.md
+# - Platform-specific version tracking in ci/<platform>/LATEST_VERSION
+# - Nightly releases marked as "latest" for easy access
+#
+# ARTIFACT NAMING CONVENTION:
+# The workflow uses a global basename (Citron-Nightly_<commit-hash>) defined
+# in the check-version job, which is combined with platform-specific suffixes
+# defined in each build matrix job:
+# - Linux: Citron-Nightly_b1192de0c-linux-amd64.AppImage
+# - Windows: Citron-Nightly_b1192de0c-windows-amd64.zip
+# - macOS: Citron-Nightly_b1192de0c-macos-universal.dmg
+# - Android: Citron-Nightly_b1192de0c-android-arm64.apk
+#
+# RELEASE MANAGEMENT:
+# - Tag: Always uses 'citron-nightly' (no new tags per build)
+# - Behavior: Overwrites existing release with new artifacts
+# - Type: Always marked as prerelease (nightly builds)
+# - Latest: Marked as latest release for easy access
+# - Release Notes: Generated from ci/NIGHTLY_RELEASE_TEMPLATE.md with automatic
+#   variable substitution
+# - Version Tracking: Platform-specific files in ci/<platform>/LATEST_VERSION
+# ==============================================================================
+
+name: Build Citron (All Platforms)
+
+# Prevent concurrent builds from running simultaneously to avoid resource conflicts
+concurrency:
+  group: build-all-platforms-${{ github.ref }}
+  cancel-in-progress: true
+
+# Trigger on manual dispatch or daily schedule
+on:
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even if no changes detected'
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 12 * * *"  # Daily at 12:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================
+  # Centralized Version Checking and Artifact Naming
+  # ============================================================
+  # This job runs first and determines:
+  # 1. Whether a build is needed (new commits detected)
+  # 2. The global artifact basename for all platforms
+  # 3. Release tag management
+  # ============================================================
+  check-version:
+    name: Check if new version available
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.compare.outputs.should_build }}
+      new_hash: ${{ steps.upstream.outputs.hash_short }}
+      new_hash_full: ${{ steps.upstream.outputs.hash_full }}
+      branch_name: ${{ steps.branch_check.outputs.branch_name }}
+      build_type: ${{ steps.build_type.outputs.type }}
+      version: ${{ steps.version.outputs.version }}
+      tag_name: ${{ steps.release_check.outputs.tag_name }}
+      artifact_basename: ${{ steps.basename.outputs.artifact_basename }}
+
+    steps:
+      # Checkout this repository to access version tracking files
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      # Detect which upstream branch to build from (feature branch or main)
+      - name: Detect upstream branch and commit
+        id: branch_check
+        run: |
+          REPO="https://git.citron-emu.org/Citron/Emulator.git"
+          FEATURE="feature/android-game-file-extraction"
+          if git ls-remote --heads "$REPO" "$FEATURE" | grep -q "$FEATURE"; then
+            BRANCH="$FEATURE"
+            HASH=$(git ls-remote "$REPO" "$FEATURE" | cut -f1)
+            echo "Using feature branch"
+          else
+            BRANCH="main"
+            HASH=$(git ls-remote "$REPO" HEAD | cut -f1)
+            echo "Using main branch"
+          fi
+          echo "branch_name=$BRANCH" >> $GITHUB_OUTPUT
+          echo "hash_full=$HASH" >> $GITHUB_OUTPUT
+          echo "hash_short=${HASH:0:7}" >> $GITHUB_OUTPUT
+
+      # Pass through the commit hash for use in downstream jobs
+      - name: Get upstream commit hash
+        id: upstream
+        run: |
+          echo "hash_short=${{ steps.branch_check.outputs.hash_short }}" >> $GITHUB_OUTPUT
+          echo "hash_full=${{ steps.branch_check.outputs.hash_full }}" >> $GITHUB_OUTPUT
+
+      # Clone upstream repo to get version information
+      - name: Get latest version
+        id: version
+        run: |
+          git clone --depth 1 --branch "${{ steps.branch_check.outputs.branch_name }}" \
+            https://git.citron-emu.org/Citron/Emulator.git temp_repo
+          cd temp_repo
+          
+          # Try to get version from latest tag, fallback to commit date if no tags
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            # No tags found, use commit date as version
+            VERSION=$(date +%Y.%m.%d)
+            echo "No tags found, using date as version: $VERSION"
+          else
+            VERSION=${LATEST_TAG#v}
+            echo "Found tag: $LATEST_TAG, version: $VERSION"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # Read the last built commit hash from the Linux version tracking file
+      # (We use Linux as the canonical source since it's the most commonly built platform)
+      - name: Get last built version
+        id: last_built
+        run: |
+          LAST_HASH=$(cat ci/linux/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
+
+      # This workflow only handles nightly builds (no stable release logic)
+      - name: Set build type
+        id: build_type
+        run: |
+          echo "type=nightly" >> $GITHUB_OUTPUT
+
+      # Check if the citron-nightly release already exists
+      - name: Check if release exists
+        id: release_check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="citron-nightly"
+          
+          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # Generate the global artifact basename used by all platform builds
+      # Format: Citron-Nightly_<commit-hash>
+      # This basename is combined with platform-specific suffixes in the build jobs
+      - name: Generate artifact basename
+        id: basename
+        run: |
+          HASH="${{ steps.upstream.outputs.hash_short }}"
+          BASENAME="Citron-Nightly_$HASH"
+          
+          echo "artifact_basename=$BASENAME" >> $GITHUB_OUTPUT
+          echo "Generated basename: $BASENAME"
+
+      # Determine if a build should be triggered based on:
+      # 1. Manual force build override
+      # 2. New commits detected in upstream
+      # 3. No existing release found
+      - name: Compare versions
+        id: compare
+        run: |
+          if [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Forced build requested"
+          elif [ "${{ steps.upstream.outputs.hash_short }}" != "${{ steps.last_built.outputs.last_hash }}" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "New version detected"
+          elif [ "${{ steps.release_check.outputs.exists }}" != "true" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "No release exists"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          fi
+  # ============================================================
+  # Build Matrix - All Platforms
+  # ============================================================
+  # This job runs builds for all target platforms in parallel
+  # Each platform uses the global artifact_basename from check-version
+  # and appends its platform-specific suffix
+  # ============================================================
+  build-matrix:
+    name: Build Citron (${{ matrix.platform.name }})
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ${{ matrix.platform.runs_on }}
+    timeout-minutes: ${{ matrix.platform.timeout }}
+
+    strategy:
+      fail-fast: false  # Continue building other platforms if one fails
+      matrix:
+        include:
+          # Linux x86_64 - Standard AMD64 build
+          - platform:
+              name: "Linux x86_64"
+              runs_on: "ubuntu-latest"
+              arch: "x86_64"
+              artifact_name: "linux-amd64"
+              script_suffix: ""
+              build_arg: ""
+              container: "ghcr.io/pkgforge-dev/archlinux:latest"
+              timeout: 120
+              build_script: |
+                chmod +x ci/linux/build.sh
+                ci/linux/build.sh x86_64 "${{ needs.check-version.outputs.artifact_basename }}"
+              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_suffix: "-linux-amd64"  # Platform suffix appended to basename
+
+          # Linux x86_64_v3
+          - platform:
+              name: "Linux x86_64_v3"
+              runs_on: "ubuntu-latest"
+              arch: "x86_64_v3"
+              artifact_name: "linux-amd64-v3"
+              script_suffix: "_v3"
+              build_arg: "v3"
+              container: "ghcr.io/pkgforge-dev/archlinux:latest"
+              timeout: 120
+              build_script: |
+                chmod +x ci/linux/build.sh
+                ci/linux/build.sh x86_64_v3 "${{ needs.check-version.outputs.artifact_basename }}" v3
+              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_suffix: "-linux-amd64-v3"
+
+          # Linux aarch64
+          - platform:
+              name: "Linux aarch64"
+              runs_on: "ubuntu-24.04-arm"
+              arch: "aarch64"
+              artifact_name: "linux-arm64"
+              script_suffix: ""
+              build_arg: ""
+              container: "ghcr.io/pkgforge-dev/archlinux:latest"
+              timeout: 120
+              build_script: |
+                chmod +x ci/linux/build.sh
+                ci/linux/build.sh aarch64 "${{ needs.check-version.outputs.artifact_basename }}"
+              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_suffix: "-linux-arm64"
+
+          # Windows x86_64
+          - platform:
+              name: "Windows x86_64"
+              runs_on: "windows-latest"
+              arch: "x86_64"
+              artifact_name: "windows-amd64"
+              timeout: 360
+              build_script: |
+                ci/windows/build.ps1 -Arch x86_64 -ArtifactBasename "${{ needs.check-version.outputs.artifact_basename }}"
+              shell: pwsh
+              artifact_path: "emulator/dist/*.zip"
+              artifact_suffix: "-windows-amd64"
+
+          # Windows ARM64
+          #- platform:
+          #    name: "Windows ARM64"
+          #    runs_on: "windows-11-arm"
+          #    arch: "arm64"
+          #    artifact_name: "windows-arm64"
+          #    timeout: 360
+          #    build_script: |
+          #      # Install Vulkan SDK (version 1.4.335.0)
+          #      $vulkan_sdk_url = "https://sdk.lunarg.com/sdk/download/1.4.335.0/warm/vulkansdk-windows-ARM64-1.4.335.0.exe"
+          #      Invoke-WebRequest -Uri $vulkan_sdk_url -OutFile VulkanSDK-Installer.exe
+          #      Start-Process -FilePath ".\VulkanSDK-Installer.exe" -ArgumentList "--accept-licenses", "--default-answer", "--confirm-command", "install" -Wait
+          #      # Add Vulkan SDK to PATH (includes glslangValidator)
+          #      $vulkanPath = "C:\VulkanSDK\1.4.335.0\Bin"
+          #     echo "$vulkanPath" | Out-File -FilePath $env:GITHUB_PATH -Append
+          #      # Also set for current session
+          #      $env:PATH = "$vulkanPath;$env:PATH"
+                
+          #      # Clone source
+          #      git clone --recursive "https://git.citron-emu.org/Citron/Emulator.git" emulator
+                  
+          #      # Configure and build (simplified like working workflow)
+          #      cd emulator
+          #      cmake -B build -S . -G "Visual Studio 17 2022" -A ARM64 `
+          #        -DCITRON_USE_BUNDLED_VCPKG=ON `
+          #        -DCITRON_BUILD_TYPE=Nightly `
+          #        -DCITRON_ENABLE_LTO=ON `
+          #        -DCITRON_USE_BUNDLED_QT=ON `
+          #        -DENABLE_QT6=ON `
+          #        -DCITRON_TESTS=OFF `
+          #        -DUSE_DISCORD_PRESENCE=ON `
+          #        -DENABLE_WEB_SERVICE=ON `
+          #        -DENABLE_OPENSSL=ON `
+          #        -DCITRON_USE_AUTO_UPDATER=ON `
+          #        -DCITRON_ENABLE_LIBARCHIVE=ON
+          #      cmake --build build --config Release --parallel
+                
+          #      # Package (exclude PDB files like working workflow)
+          #      New-Item -ItemType Directory -Path ".\dist" -Force | Out-Null
+          #      New-Item -ItemType Directory -Path ".\temp_package" -Force | Out-Null
+          #      Get-ChildItem ".\build\bin\Release\" -Recurse | Where-Object { $_.Extension -ne ".pdb" } | ForEach-Object {
+          #        $relativePath = $_.FullName.Replace((Resolve-Path ".\build\bin\Release\").Path, "").TrimStart('\')
+          #        $destPath = Join-Path ".\temp_package" $relativePath
+          #        $destDir = Split-Path $destPath -Parent
+          #        if (!(Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+          #        Copy-Item $_.FullName $destPath -Force
+          #      }
+          #      Compress-Archive -Path ".\temp_package\*" -DestinationPath ".\dist\Citron-windows-arm64.zip" -Force
+          #      Remove-Item ".\temp_package" -Recurse -Force
+          #    shell: pwsh
+          #    artifact_path: "dist/*.zip"
+          #    artifact_suffix: "-windows-arm64"
+
+          # macOS
+          - platform:
+              name: "macOS"
+              runs_on: "macos-latest"
+              arch: "universal"
+              artifact_name: "macos"
+              timeout: 180
+              build_script: |
+                chmod +x ci/macos/build.sh
+                ci/macos/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
+              artifact_path: "citron/dist/*.dmg"
+              artifact_suffix: "-macos-universal"
+
+          # Android
+          - platform:
+              name: "Android"
+              runs_on: "ubuntu-latest"
+              arch: "arm64-v8a"
+              artifact_name: "android"
+              timeout: 240
+              build_script: |
+                chmod +x ci/android/build.sh
+                ci/android/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
+              artifact_path: "citron/dist/*.apk"
+              artifact_suffix: "-android-arm64"
+
+    container: ${{ matrix.platform.container || null }}
+
+    env:
+      GIT_SHA: ${{ needs.check-version.outputs.new_hash }}
+      GIT_SHA_FULL: ${{ needs.check-version.outputs.new_hash_full }}
+      UPSTREAM_BRANCH: ${{ needs.check-version.outputs.branch_name }}
+
+    steps:
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v4
+
+      - name: Install Git (container)
+        if: matrix.platform.container != ''
+        run: pacman -Syu --noconfirm --needed git
+
+      - name: Clone upstream source
+        shell: bash
+        run: |
+          git clone \
+            --branch "$UPSTREAM_BRANCH" \
+            --recurse-submodules \
+            https://git.citron-emu.org/Citron/Emulator.git emulator
+          cd emulator
+          git checkout "$GIT_SHA_FULL"
+      - name: Mark safe directory
+        run: git config --global --add safe.directory "$PWD/emulator"
+
+      - name: Cache vcpkg and Qt dependencies (Windows)
+        if: matrix.platform.runs_on == 'windows-latest' || matrix.platform.runs_on == 'windows-11-arm'
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          # The path contains both the vcpkg installed libs and the downloaded Qt binaries
+          path: emulator/build
+          # The key invalidates the cache if the OS, architecture, or vcpkg dependency list changes
+          key: vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-${{ hashFiles('emulator/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-
+      - name: Get Nightly Version
+        id: version
+        working-directory: ./emulator
+        shell: bash
+        run: |
+          git fetch --tags
+          VERSION=$(git rev-parse --short HEAD)
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+      - name: Execute platform build
+        run: |
+          ${{ matrix.platform.build_script }}
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}
+          path: ${{ matrix.platform.artifact_path }}
+          retention-days: 7
+          if-no-files-found: error
+
+  # ============================================================
+  # Create Unified Release
+  # ============================================================
+  create-release:
+    name: Create Release
+    needs: [check-version, build-matrix]
+    if: |
+      needs.check-version.outputs.should_build == 'true' && 
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/new-build-process')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-artifacts
+          pattern: "*"
+
+      - name: Flatten and rename artifacts
+        run: |
+          mkdir -p ./release-files
+          
+          # Function to determine file extension
+          get_extension() {
+            local file="$1"
+            case "$file" in
+              *.AppImage*) echo ".AppImage" ;;
+              *.zip) echo ".zip" ;;
+              *.dmg) echo ".dmg" ;;
+              *.apk) echo ".apk" ;;
+              *.tar.zst) echo ".tar.zst" ;;
+              *) echo "" ;;
+            esac
+          }
+          
+          # Copy and rename artifacts based on their directory names
+          for dir in ./release-artifacts/*/; do
+            if [ -d "$dir" ]; then
+              artifact_name=$(basename "$dir")
+              
+              # Find the actual file
+              file=$(find "$dir" -type f \( -name "*.AppImage*" -o -name "*.zip" -o -name "*.dmg" -o -name "*.apk" -o -name "*.tar.zst" \) | head -n 1)
+              
+              if [ -n "$file" ] && [ -f "$file" ]; then
+                ext=$(get_extension "$file")
+                if [ -n "$ext" ]; then
+                  # Extract the suffix from the artifact name (everything after the basename)
+                  suffix="${artifact_name#${{ needs.check-version.outputs.artifact_basename }}}"
+                  new_name="${{ needs.check-version.outputs.artifact_basename }}$suffix$ext"
+                  
+                  echo "Renaming: $artifact_name -> $new_name"
+                  cp "$file" "./release-files/$new_name"
+                fi
+              fi
+            fi
+          done
+          
+          echo "Artifacts found:"
+          ls -lh ./release-files/
+
+      - name: Generate Release Notes from Template
+        id: generate_notes
+        run: |
+          chmod +x ci/generate-release-notes.sh
+          
+          # Get current date and time
+          CURRENT_DATE=$(date +%Y-%m-%d)
+          CURRENT_TIME=$(date +%H:%M:%S)
+          
+          # Generate release notes using the template
+          RELEASE_BODY=$(bash ci/generate-release-notes.sh \
+            "${{ needs.check-version.outputs.new_hash }}" \
+            "${{ needs.check-version.outputs.new_hash_full }}" \
+            "${{ needs.check-version.outputs.branch_name }}" \
+            "${{ needs.check-version.outputs.version }}" \
+            "$CURRENT_DATE" \
+            "$CURRENT_TIME")
+          
+          # Save to file for use with gh-release
+          echo "$RELEASE_BODY" > release-notes.md
+          
+          # Also output for debugging (first 1000 chars)
+          echo "Generated release notes (first 1000 chars):"
+          echo "$RELEASE_BODY" | head -c 1000
+          echo "..."
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check-version.outputs.tag_name }}
+          name: Citron Nightly (${{ needs.check-version.outputs.new_hash }})
+          prerelease: true
+          draft: false
+          overwrite: true
+          make_latest: true
+          files: ./release-files/*
+          body_path: release-notes.md
+
+      - name: Update platform-specific version files
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Update all platform-specific version files
+          NEW_HASH="${{ needs.check-version.outputs.new_hash }}"
+          
+          echo "$NEW_HASH" > ci/linux/LATEST_VERSION
+          echo "$NEW_HASH" > ci/windows/LATEST_VERSION
+          echo "$NEW_HASH" > ci/macos/LATEST_VERSION
+          echo "$NEW_HASH" > ci/android/LATEST_VERSION
+          
+          # Add and commit all version files
+          git add ci/linux/LATEST_VERSION ci/windows/LATEST_VERSION ci/macos/LATEST_VERSION ci/android/LATEST_VERSION
+          git commit -m "Update platform version files to $NEW_HASH [skip ci]" || exit 0
+          
+          # Retry push with backoff
+          for i in {1..5}; do
+            if git pull --rebase && git push; then
+              break
+            fi
+            sleep $((2**i))
+          done
