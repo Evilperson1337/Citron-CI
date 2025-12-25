@@ -32,7 +32,7 @@
 # - Version Tracking: Platform-specific files in ci/<platform>/LATEST_VERSION
 # ==============================================================================
 
-name: Build Citron (All Platforms)
+name: Build Citron - Nightly (All)
 
 # Prevent concurrent builds from running simultaneously to avoid resource conflicts
 concurrency:
