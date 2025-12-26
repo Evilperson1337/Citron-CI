@@ -101,11 +101,15 @@ jobs:
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Read the last built commit hash from the Android version tracking file
+      # Read the last built commit hash from the canonical version tracking file
       - name: Get last built version
         id: last_built
         run: |
-          LAST_HASH=$(cat ci/android/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          LAST_HASH=$(cat ci/nightly/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          # Parse format: <upstream-hash>:<workflow-hash> or just <hash> for legacy
+          if [[ "$LAST_HASH" == *":"* ]]; then
+            LAST_HASH=$(echo "$LAST_HASH" | cut -d: -f1)
+          fi
           echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
 
       # This workflow only handles nightly builds
@@ -180,9 +184,8 @@ jobs:
               arch: "arm64-v8a"
               artifact_name: "android-arm64"
               timeout: 240
-              build_script: |
-                chmod +x ci/android/build.sh
-                ci/android/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
+              build_script: ci/android/build.sh
+              build_args: ["${{ needs.check-version.outputs.artifact_basename }}"]
               artifact_path: "citron/dist/*.apk"
               artifact_suffix: "-android-arm64"
 
@@ -193,45 +196,8 @@ jobs:
               arch: "arm64-v8a"
               artifact_name: "android-arm64-snapdragon"
               timeout: 240
-              build_script: |
-                export TARGET=Lyb
-                export MODEL="8 Elite"
-                export CCACHE_DIR=${{ github.workspace }}/.ccache
-                export CCACHE_COMPILERCHECK=content
-                export CCACHE_SLOPPINESS=time_macros
-                
-                # Install build dependencies
-                sudo apt-get update -y
-                sudo apt-get install -y ccache glslang-tools libvulkan-dev python3-requests patch
-                
-                # Checkout this repo for patches
-                git clone --depth 1 https://github.com/${{ github.repository }}.git ci-repo
-                
-                # Clone Citron source
-                git clone --recurse-submodules --depth 1 -b "${{ needs.check-version.outputs.branch_name }}" \
-                  "https://git.citron-emu.org/Citron/Emulator.git" citron
-                
-                # Apply Snapdragon 8 Elite patches
-                cd citron
-                echo "Applying Snapdragon 8 Elite patches..."
-                
-                # Patch 1: Force System Driver Load (native.cpp)
-                sed -i '/if (!handle) {/,/}/c\    if (!handle) {\n        handle = dlopen("libvulkan.so", RTLD_NOW);\n    }' src/android/app/src/main/jni/native.cpp
-                
-                # Patch 2: 8 Elite Fixes for Qualcomm (vulkan_device.h)
-                sed -i '/bool IsShaderInt64Supported() const {/a \        const auto driver = GetDriverID();\n        if (driver == VK_DRIVER_ID_QUALCOMM_PROPRIETARY) {\n            return false;\n        }' src/video_core/vulkan_common/vulkan_device.h
-                sed -i '/bool IsExtShaderAtomicInt64Supported() const {/a \        const auto driver = GetDriverID();\n        if (driver == VK_DRIVER_ID_QUALCOMM_PROPRIETARY) {\n            return false;\n        }' src/video_core/vulkan_common/vulkan_device.h
-                
-                # Patch 3: 8 Elite & Cleanup Fixes (vulkan_device.cpp)
-                sed -i '/const auto device_id =/d' src/video_core/vulkan_common/vulkan_device.cpp
-                sed -i 's/\bdevice_id\b/properties.properties.deviceID/g' src/video_core/vulkan_common/vulkan_device.cpp
-                sed -i 's/if (is_qualcomm) {/if (driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY) {/' src/video_core/vulkan_common/vulkan_device.cpp
-                
-                cd ..
-                
-                # Run the standard Android build script
-                chmod +x ci/android/build.sh
-                ci/android/build.sh "${{ needs.check-version.outputs.artifact_basename }}" snapdragon
+              build_script: ci/android/build-snapdragon.sh
+              build_args: ["${{ needs.check-version.outputs.artifact_basename }}", "${{ needs.check-version.outputs.branch_name }}"]
               artifact_path: "citron/dist/*.apk"
               artifact_suffix: "-android-arm64-snapdragon"
 
@@ -268,7 +234,8 @@ jobs:
 
       - name: Execute platform build
         run: |
-          ${{ matrix.platform.build_script }}
+          chmod +x ${{ matrix.platform.build_script }}
+          ${{ matrix.platform.build_script }} "${{ join(matrix.platform.build_args, '" "') }}"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -370,7 +337,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Update Android version file
+          # Update Android version file (mirror of canonical)
           NEW_HASH="${{ needs.check-version.outputs.new_hash }}"
           echo "$NEW_HASH" > ci/android/LATEST_VERSION
           

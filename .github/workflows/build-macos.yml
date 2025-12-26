@@ -101,11 +101,15 @@ jobs:
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Read the last built commit hash from the macOS version tracking file
+      # Read the last built commit hash from the canonical version tracking file
       - name: Get last built version
         id: last_built
         run: |
-          LAST_HASH=$(cat ci/macos/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          LAST_HASH=$(cat ci/nightly/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          # Parse format: <upstream-hash>:<workflow-hash> or just <hash> for legacy
+          if [[ "$LAST_HASH" == *":"* ]]; then
+            LAST_HASH=$(echo "$LAST_HASH" | cut -d: -f1)
+          fi
           echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
 
       # This workflow only handles nightly builds
@@ -180,9 +184,8 @@ jobs:
               arch: "universal"
               artifact_name: "macos-universal"
               timeout: 180
-              build_script: |
-                chmod +x ci/macos/build.sh
-                ci/macos/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
+              build_script: ci/macos/build.sh
+              build_args: ["${{ needs.check-version.outputs.artifact_basename }}"]
               artifact_path: "citron/dist/*.dmg"
               artifact_suffix: "-macos-universal"
 
@@ -219,7 +222,8 @@ jobs:
 
       - name: Execute platform build
         run: |
-          ${{ matrix.platform.build_script }}
+          chmod +x ${{ matrix.platform.build_script }}
+          ${{ matrix.platform.build_script }} "${{ join(matrix.platform.build_args, '" "') }}"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -319,7 +323,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Update macOS version file
+          # Update macOS version file (mirror of canonical)
           NEW_HASH="${{ needs.check-version.outputs.new_hash }}"
           echo "$NEW_HASH" > ci/macos/LATEST_VERSION
           

@@ -102,11 +102,15 @@ jobs:
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Read the last built commit hash from the Windows version tracking file
+      # Read the last built commit hash from the canonical version tracking file
       - name: Get last built version
         id: last_built
         run: |
-          LAST_HASH=$(cat ci/windows/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          LAST_HASH=$(cat ci/nightly/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          # Parse format: <upstream-hash>:<workflow-hash> or just <hash> for legacy
+          if [[ "$LAST_HASH" == *":"* ]]; then
+            LAST_HASH=$(echo "$LAST_HASH" | cut -d: -f1)
+          fi
           echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
 
       # This workflow only handles nightly builds
@@ -181,8 +185,8 @@ jobs:
               arch: "x86_64"
               artifact_name: "windows-amd64"
               timeout: 360
-              build_script: |
-                ci/windows/build.ps1 -Arch x86_64 -ArtifactBasename "${{ needs.check-version.outputs.artifact_basename }}"
+              build_script: ci/windows/build.ps1
+              build_args: ["-Arch", "x86_64", "-ArtifactBasename", "${{ needs.check-version.outputs.artifact_basename }}"]
               shell: pwsh
               artifact_path: "emulator/dist/*.zip"
               artifact_suffix: "-windows-amd64"
@@ -194,8 +198,8 @@ jobs:
               arch: "arm64"
               artifact_name: "windows-arm64"
               timeout: 360
-              build_script: |
-                ci/windows/build.ps1 -Arch arm64 -ArtifactBasename "${{ needs.check-version.outputs.artifact_basename }}"
+              build_script: ci/windows/build.ps1
+              build_args: ["-Arch", "arm64", "-ArtifactBasename", "${{ needs.check-version.outputs.artifact_basename }}"]
               shell: pwsh
               artifact_path: "emulator/dist/*.zip"
               artifact_suffix: "-windows-arm64"
@@ -239,7 +243,7 @@ jobs:
 
       - name: Execute platform build
         run: |
-          ${{ matrix.platform.build_script }}
+          & ${{ matrix.platform.build_script }} ${{ join(matrix.platform.build_args, ' ') }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -339,7 +343,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Update Windows version file
+          # Update Windows version file (mirror of canonical)
           NEW_HASH="${{ needs.check-version.outputs.new_hash }}"
           echo "$NEW_HASH" > ci/windows/LATEST_VERSION
           

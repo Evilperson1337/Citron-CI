@@ -102,11 +102,15 @@ jobs:
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Read the last built commit hash from the Linux version tracking file
+      # Read the last built commit hash from the canonical version tracking file
       - name: Get last built version
         id: last_built
         run: |
-          LAST_HASH=$(cat ci/linux/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          LAST_HASH=$(cat ci/nightly/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          # Parse format: <upstream-hash>:<workflow-hash> or just <hash> for legacy
+          if [[ "$LAST_HASH" == *":"* ]]; then
+            LAST_HASH=$(echo "$LAST_HASH" | cut -d: -f1)
+          fi
           echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
 
       # This workflow only handles nightly builds
@@ -181,12 +185,10 @@ jobs:
               arch: "x86_64"
               artifact_name: "linux-amd64"
               timeout: 120
-              build_script: |
-                chmod +x ci/linux/build.sh
-                ci/linux/build.sh x86_64 "${{ needs.check-version.outputs.artifact_basename }}"
+              build_script: ci/linux/build.sh
+              build_args: ["x86_64", "${{ needs.check-version.outputs.artifact_basename }}"]
               artifact_path: |
                 emulator/dist/*.AppImage*
-                emulator/dist/*.zsync
                 emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64"
 
@@ -197,12 +199,10 @@ jobs:
               arch: "x86_64_v3"
               artifact_name: "linux-amd64-v3"
               timeout: 120
-              build_script: |
-                chmod +x ci/linux/build.sh
-                ci/linux/build.sh x86_64_v3 "${{ needs.check-version.outputs.artifact_basename }}" v3
+              build_script: ci/linux/build.sh
+              build_args: ["x86_64_v3", "${{ needs.check-version.outputs.artifact_basename }}", "v3"]
               artifact_path: |
                 emulator/dist/*.AppImage*
-                emulator/dist/*.zsync
                 emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64-v3"
 
@@ -213,12 +213,10 @@ jobs:
               arch: "aarch64"
               artifact_name: "linux-arm64"
               timeout: 120
-              build_script: |
-                chmod +x ci/linux/build.sh
-                ci/linux/build.sh aarch64 "${{ needs.check-version.outputs.artifact_basename }}"
+              build_script: ci/linux/build.sh
+              build_args: ["aarch64", "${{ needs.check-version.outputs.artifact_basename }}"]
               artifact_path: |
                 emulator/dist/*.AppImage*
-                emulator/dist/*.zsync
                 emulator/dist/*.tar.zst
               artifact_suffix: "-linux-arm64"
 
@@ -261,7 +259,8 @@ jobs:
 
       - name: Execute platform build
         run: |
-          ${{ matrix.platform.build_script }}
+          chmod +x ${{ matrix.platform.build_script }}
+          ${{ matrix.platform.build_script }} "${{ join(matrix.platform.build_args, '" "') }}"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -355,13 +354,13 @@ jobs:
           files: ./release-files/*
           body_path: release-notes.md
 
-      - name: Update platform-specific version files
+      - name: Update canonical and platform-specific version files
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Update Linux version file
+          # Update Linux version file (mirror of canonical)
           NEW_HASH="${{ needs.check-version.outputs.new_hash }}"
           echo "$NEW_HASH" > ci/linux/LATEST_VERSION
           
