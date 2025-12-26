@@ -107,8 +107,8 @@ jobs:
           echo "hash_short=${{ steps.branch_check.outputs.hash_short }}" >> $GITHUB_OUTPUT
           echo "hash_full=${{ steps.branch_check.outputs.hash_full }}" >> $GITHUB_OUTPUT
 
-      # Clone upstream repo to get version information
-      - name: Get latest version
+      # Clone upstream repo to get version information and source code
+      - name: Clone upstream source
         id: version
         run: |
           git clone --depth 1 --branch "${{ steps.branch_check.outputs.branch_name }}" \
@@ -127,6 +127,14 @@ jobs:
           fi
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # Upload source code as artifact
+      - name: Upload source code
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-code-${{ steps.upstream.outputs.hash_short }}
+          path: temp_repo/
+          retention-days: 1
 
       # Read the last built commit hash from the canonical version tracking file
       - name: Get last built version
@@ -176,6 +184,14 @@ jobs:
           HASH="${{ steps.upstream.outputs.hash_short }}"
           BASENAME="Citron-Nightly_$HASH"
           
+          echo "artifact_basename=$BASENAME" >> $GITHUB_OUTPUT
+          echo "Generated basename: $BASENAME"
+
+      # Determine if a build should be triggered based on:
+      # 1. Manual force build override
+      # 2. New commits detected in upstream
+      # 3. Workflow/CI scripts changed
+      # 4. No existing release found
           echo "artifact_basename=$BASENAME" >> $GITHUB_OUTPUT
           echo "Generated basename: $BASENAME"
 
@@ -400,69 +416,81 @@ jobs:
           cd emulator
           git checkout "$GIT_SHA_FULL"
       - name: Mark safe directory
-       run: git config --global --add safe.directory "$PWD/emulator"
+        run: git config --global --add safe.directory "$PWD/emulator"
 
-     - name: Cache build artifacts (Linux)
-       if: runner.os == 'Linux' && matrix.platform.runs_on != 'windows-latest' && matrix.platform.runs_on != 'windows-11-arm' && matrix.platform.arch != 'arm64-v8a'
-       uses: actions/cache@v4
-       id: cache-build-linux
-       with:
-         path: emulator/build
-         key: build-linux-${{ matrix.platform.arch }}-${{ needs.check-version.outputs.new_hash }}
-         restore-keys: |
-           build-linux-${{ matrix.platform.arch }}-
+      - name: Download source code
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code-${{ needs.check-version.outputs.new_hash }}
+          path: emulator
 
-     - name: Cache Homebrew packages (macOS)
-       if: runner.os == 'macOS'
-       uses: actions/cache@v4
-       id: cache-homebrew-macos
-       with:
-         path: ~/Library/Caches/Homebrew
-         key: homebrew-macos-${{ hashFiles('**/brewfile.lock.json') }}
-         restore-keys: |
-           homebrew-macos-
+      - name: Initialize and update submodules
+        working-directory: ./emulator
+        run: |
+          git submodule init
+          git submodule update --recursive
 
-     - name: Cache build artifacts (macOS)
-       if: runner.os == 'macOS'
-       uses: actions/cache@v4
-       id: cache-build-macos
-       with:
-         path: emulator/build
-         key: build-macos-universal-${{ needs.check-version.outputs.new_hash }}
-         restore-keys: |
-           build-macos-universal-
+      - name: Cache build artifacts (Linux)
+        if: runner.os == 'Linux' && matrix.platform.runs_on != 'windows-latest' && matrix.platform.runs_on != 'windows-11-arm' && matrix.platform.arch != 'arm64-v8a'
+        uses: actions/cache@v4
+        id: cache-build-linux
+        with:
+          path: emulator/build
+          key: build-linux-${{ matrix.platform.arch }}-${{ needs.check-version.outputs.new_hash }}
+          restore-keys: |
+            build-linux-${{ matrix.platform.arch }}-
 
-     - name: Cache vcpkg dependencies (Android)
-       if: matrix.platform.arch == 'arm64-v8a'
-       uses: actions/cache@v4
-       id: cache-vcpkg-android
-       with:
-         path: emulator/build/vcpkg_installed
-         key: vcpkg-android-arm64-${{ hashFiles('emulator/vcpkg.json') }}
-         restore-keys: |
-           vcpkg-android-arm64-
-           vcpkg-android-
+      - name: Cache Homebrew packages (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        id: cache-homebrew-macos
+        with:
+          path: ~/Library/Caches/Homebrew
+          key: homebrew-macos-${{ hashFiles('**/brewfile.lock.json') }}
+          restore-keys: |
+            homebrew-macos-
 
-     - name: Cache vcpkg and Qt dependencies (Windows)
-       if: matrix.platform.runs_on == 'windows-latest' || matrix.platform.runs_on == 'windows-11-arm'
-       uses: actions/cache@v4
-       id: cache-vcpkg-windows
-       with:
-         # The path contains both the vcpkg installed libs and the downloaded Qt binaries
-         path: emulator/build
-         # The key invalidates the cache if the OS, architecture, or vcpkg dependency list changes
-         key: vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-${{ hashFiles('emulator/vcpkg.json') }}
-         restore-keys: |
-           vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-
+      - name: Cache build artifacts (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        id: cache-build-macos
+        with:
+          path: emulator/build
+          key: build-macos-universal-${{ needs.check-version.outputs.new_hash }}
+          restore-keys: |
+            build-macos-universal-
 
-     - name: Get Nightly Version
-       id: version
-       working-directory: ./emulator
-       shell: bash
-       run: |
-         git fetch --tags
-         VERSION=$(git rev-parse --short HEAD)
-         echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+      - name: Cache vcpkg dependencies (Android)
+        if: matrix.platform.arch == 'arm64-v8a'
+        uses: actions/cache@v4
+        id: cache-vcpkg-android
+        with:
+          path: emulator/build/vcpkg_installed
+          key: vcpkg-android-arm64-${{ hashFiles('emulator/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-android-arm64-
+            vcpkg-android-
+
+      - name: Cache vcpkg and Qt dependencies (Windows)
+        if: matrix.platform.runs_on == 'windows-latest' || matrix.platform.runs_on == 'windows-11-arm'
+        uses: actions/cache@v4
+        id: cache-vcpkg-windows
+        with:
+          # The path contains both the vcpkg installed libs and the downloaded Qt binaries
+          path: emulator/build
+          # The key invalidates the cache if the OS, architecture, or vcpkg dependency list changes
+          key: vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-${{ hashFiles('emulator/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-
+
+      - name: Get Nightly Version
+        id: version
+        working-directory: ./emulator
+        shell: bash
+        run: |
+          git fetch --tags
+          VERSION=$(git rev-parse --short HEAD)
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
       - name: Execute platform build
         run: |
           chmod +x ${{ matrix.platform.build_script }}

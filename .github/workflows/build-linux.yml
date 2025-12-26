@@ -75,32 +75,40 @@ jobs:
           echo "hash_short=${HASH:0:7}" >> $GITHUB_OUTPUT
 
       # Pass through the commit hash for use in downstream jobs
-      - name: Get upstream commit hash
-        id: upstream
-        run: |
-          echo "hash_short=${{ steps.branch_check.outputs.hash_short }}" >> $GITHUB_OUTPUT
-          echo "hash_full=${{ steps.branch_check.outputs.hash_full }}" >> $GITHUB_OUTPUT
+     - name: Get upstream commit hash
+       id: upstream
+       run: |
+         echo "hash_short=${{ steps.branch_check.outputs.hash_short }}" >> $GITHUB_OUTPUT
+         echo "hash_full=${{ steps.branch_check.outputs.hash_full }}" >> $GITHUB_OUTPUT
 
-      # Clone upstream repo to get version information
-      - name: Get latest version
-        id: version
-        run: |
-          git clone --depth 1 --branch "${{ steps.branch_check.outputs.branch_name }}" \
-            https://git.citron-emu.org/Citron/Emulator.git temp_repo
-          cd temp_repo
-          
-          # Try to get version from latest tag, fallback to commit date if no tags
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -z "$LATEST_TAG" ]; then
-            # No tags found, use commit date as version
-            VERSION=$(date +%Y.%m.%d)
-            echo "No tags found, using date as version: $VERSION"
-          else
-            VERSION=${LATEST_TAG#v}
-            echo "Found tag: $LATEST_TAG, version: $VERSION"
-          fi
-          
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+     # Clone upstream repo to get version information and source code
+     - name: Clone upstream source
+       id: version
+       run: |
+         git clone --depth 1 --branch "${{ steps.branch_check.outputs.branch_name }}" \
+           https://git.citron-emu.org/Citron/Emulator.git temp_repo
+         cd temp_repo
+         
+         # Try to get version from latest tag, fallback to commit date if no tags
+         LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+         if [ -z "$LATEST_TAG" ]; then
+           # No tags found, use commit date as version
+           VERSION=$(date +%Y.%m.%d)
+           echo "No tags found, using date as version: $VERSION"
+         else
+           VERSION=${LATEST_TAG#v}
+           echo "Found tag: $LATEST_TAG, version: $VERSION"
+         fi
+         
+         echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+     # Upload source code as artifact
+     - name: Upload source code
+       uses: actions/upload-artifact@v4
+       with:
+         name: source-code-${{ steps.upstream.outputs.hash_short }}
+         path: temp_repo/
+         retention-days: 1
 
       # Read the last built commit hash from the canonical version tracking file
       - name: Get last built version
@@ -231,22 +239,24 @@ jobs:
       - name: Checkout workflow scripts
         uses: actions/checkout@v4
 
+      - name: Download source code
+        uses: actions/download-artifact@v4
+        with:
+          name: source-code-${{ needs.check-version.outputs.new_hash }}
+          path: emulator
+
       - name: Install Git (container)
         if: matrix.platform.container != ''
         run: pacman -Syu --noconfirm --needed git
 
-      - name: Clone upstream source
-        shell: bash
-        run: |
-          git clone \
-            --branch "$UPSTREAM_BRANCH" \
-            --recurse-submodules \
-            https://git.citron-emu.org/Citron/Emulator.git emulator
-          cd emulator
-          git checkout "$GIT_SHA_FULL"
-
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
+
+      - name: Initialize and update submodules
+        working-directory: ./emulator
+        run: |
+          git submodule init
+          git submodule update --recursive
 
       - name: Cache build artifacts
         uses: actions/cache@v4
