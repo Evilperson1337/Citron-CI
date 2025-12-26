@@ -311,8 +311,8 @@ jobs:
         run: |
           mkdir -p ./release-files
           
-          # Simply copy all artifacts from subdirectories
-          find ./release-artifacts -type f \( -name "*.AppImage*" -o -name "*.tar.zst" \) -exec cp {} ./release-files/ \;
+          # Copy all artifacts from subdirectories (including zsync files)
+          find ./release-artifacts -type f \( -name "*.AppImage*" -o -name "*.tar.zst" -o -name "*.zsync" \) -exec cp {} ./release-files/ \;
           
           echo "Artifacts found:"
           ls -lh ./release-files/
