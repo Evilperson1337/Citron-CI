@@ -184,7 +184,10 @@ jobs:
               build_script: |
                 chmod +x ci/linux/build.sh
                 ci/linux/build.sh x86_64 "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_path: |
+                emulator/dist/*.AppImage*
+                emulator/dist/*.zsync
+                emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64"
 
           # Linux x86_64_v3
@@ -197,7 +200,10 @@ jobs:
               build_script: |
                 chmod +x ci/linux/build.sh
                 ci/linux/build.sh x86_64_v3 "${{ needs.check-version.outputs.artifact_basename }}" v3
-              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_path: |
+                emulator/dist/*.AppImage*
+                emulator/dist/*.zsync
+                emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64-v3"
 
           # Linux aarch64
@@ -210,7 +216,10 @@ jobs:
               build_script: |
                 chmod +x ci/linux/build.sh
                 ci/linux/build.sh aarch64 "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_path: |
+                emulator/dist/*.AppImage*
+                emulator/dist/*.zsync
+                emulator/dist/*.tar.zst
               artifact_suffix: "-linux-arm64"
 
     container: ${{ matrix.platform.container || null }}
@@ -258,9 +267,22 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}
-          path: ${{ matrix.platform.artifact_path }}
+          path: emulator/dist/*
           retention-days: 7
           if-no-files-found: error
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}-logs
+          path: |
+            emulator/build/**/*.log
+            emulator/**/CMake*.txt
+            emulator/**/CMake*.log
+            emulator/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   # ============================================================
   # Create Unified Release
@@ -285,41 +307,12 @@ jobs:
           path: ./release-artifacts
           pattern: "*"
 
-      - name: Flatten and rename artifacts
+      - name: Copy artifacts to release directory
         run: |
           mkdir -p ./release-files
           
-          # Function to determine file extension
-          get_extension() {
-            local file="$1"
-            case "$file" in
-              *.AppImage*) echo ".AppImage" ;;
-              *.tar.zst) echo ".tar.zst" ;;
-              *) echo "" ;;
-            esac
-          }
-          
-          # Copy and rename artifacts based on their directory names
-          for dir in ./release-artifacts/*/; do
-            if [ -d "$dir" ]; then
-              artifact_name=$(basename "$dir")
-              
-              # Find the actual file
-              file=$(find "$dir" -type f \( -name "*.AppImage*" -o -name "*.tar.zst" \) | head -n 1)
-              
-              if [ -n "$file" ] && [ -f "$file" ]; then
-                ext=$(get_extension "$file")
-                if [ -n "$ext" ]; then
-                  # Extract the suffix from the artifact name (everything after the basename)
-                  suffix="${artifact_name#${{ needs.check-version.outputs.artifact_basename }}}"
-                  new_name="${{ needs.check-version.outputs.artifact_basename }}$suffix$ext"
-                  
-                  echo "Renaming: $artifact_name -> $new_name"
-                  cp "$file" "./release-files/$new_name"
-                fi
-              fi
-            fi
-          done
+          # Simply copy all artifacts from subdirectories
+          find ./release-artifacts -type f \( -name "*.AppImage*" -o -name "*.tar.zst" \) -exec cp {} ./release-files/ \;
           
           echo "Artifacts found:"
           ls -lh ./release-files/

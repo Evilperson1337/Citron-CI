@@ -249,6 +249,19 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}-logs
+          path: |
+            emulator/build/**/*.log
+            emulator/**/CMake*.txt
+            emulator/**/CMake*.log
+            emulator/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
   # ============================================================
   # Create Unified Release
   # ============================================================
@@ -272,28 +285,12 @@ jobs:
           path: ./release-artifacts
           pattern: "*"
 
-      - name: Flatten and rename artifacts
+      - name: Copy artifacts to release directory
         run: |
           mkdir -p ./release-files
           
-          # Copy and rename artifacts based on their directory names
-          for dir in ./release-artifacts/*/; do
-            if [ -d "$dir" ]; then
-              artifact_name=$(basename "$dir")
-              
-              # Find the ZIP file
-              file=$(find "$dir" -type f -name "*.zip" | head -n 1)
-              
-              if [ -n "$file" ] && [ -f "$file" ]; then
-                # Extract the suffix from the artifact name (everything after the basename)
-                suffix="${artifact_name#${{ needs.check-version.outputs.artifact_basename }}}"
-                new_name="${{ needs.check-version.outputs.artifact_basename }}$suffix.zip"
-                
-                echo "Renaming: $artifact_name -> $new_name"
-                cp "$file" "./release-files/$new_name"
-              fi
-            fi
-          done
+          # Simply copy all artifacts from subdirectories
+          find ./release-artifacts -type f -name "*.zip" -exec cp {} ./release-files/ \;
           
           echo "Artifacts found:"
           ls -lh ./release-files/
