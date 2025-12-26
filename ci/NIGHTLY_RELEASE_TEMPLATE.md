@@ -60,27 +60,45 @@ Nightly builds are **automated compilation** of the latest source code from the 
 - **Platform:** Linux
 - **Architecture:** amd64
 - **Description:** For older CPUs (amd64 baseline)
-- **Format:** AppImage
+- **Formats:**
+  - **AppImage** - Portable executable (recommended for most users)
+  - **AppImage.zsync** - Incremental update metadata for zsync
+  - **tar.zst** - Compressed archive for manual installation
 - **Compatibility:** Most Linux distributions on 64-bit Intel/AMD processors
-- [**Download Here**]({asset_linux_amd64})
+- **Downloads:**
+  - [AppImage]({asset_linux_amd64})
+  - [zsync metadata]({asset_linux_amd64_zsync}) (for incremental updates)
+  - [tar.zst Archive]({asset_linux_amd64_tar})
 
 **amd64-v3**
 - **Type:** Optimized
 - **Platform:** Linux (including Steam Deck)
 - **Architecture:** amd64-v3
 - **Description:** Optimized for modern CPUs & Steam Deck
-- **Format:** AppImage
+- **Formats:**
+  - **AppImage** - Portable executable (recommended for most users)
+  - **AppImage.zsync** - Incremental update metadata for zsync
+  - **tar.zst** - Compressed archive for manual installation
 - **Compatibility:** Modern Intel/AMD processors (Haswell 2013+ and newer), Steam Deck
-- [**Download Here**]({asset_linux_amd64_v3})
+- **Downloads:**
+  - [AppImage]({asset_linux_amd64_v3})
+  - [zsync metadata]({asset_linux_amd64_v3_zsync}) (for incremental updates)
+  - [tar.zst Archive]({asset_linux_amd64_v3_tar})
 
 **arm64**
 - **Type:** Standard
 - **Platform:** Linux
 - **Architecture:** arm64 (aarch64)
 - **Description:** arm64 builds for ARM-based systems
-- **Format:** AppImage
+- **Formats:**
+  - **AppImage** - Portable executable (recommended for most users)
+  - **AppImage.zsync** - Incremental update metadata for zsync
+  - **tar.zst** - Compressed archive for manual installation
 - **Compatibility:** arm64 devices (Raspberry Pi 4/5, ARM-based SBCs, newer ARM laptops)
-- [**Download Here**]({asset_linux_arm64})
+- **Downloads:**
+  - [AppImage]({asset_linux_arm64})
+  - [zsync metadata]({asset_linux_arm64_zsync}) (for incremental updates)
+  - [tar.zst Archive]({asset_linux_arm64_tar})
 
 ### 🪟 Windows Builds
 
