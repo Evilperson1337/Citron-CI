@@ -232,6 +232,16 @@ jobs:
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
 
+      - name: Cache vcpkg dependencies
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: emulator/build/vcpkg_installed
+          key: vcpkg-windows-${{ matrix.platform.arch }}-${{ hashFiles('emulator/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-windows-${{ matrix.platform.arch }}-
+            vcpkg-windows-
+
       - name: Get Nightly Version
         id: version
         working-directory: ./emulator

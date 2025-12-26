@@ -209,16 +209,34 @@ jobs:
           git checkout "$GIT_SHA_FULL"
 
       - name: Mark safe directory
-        run: git config --global --add safe.directory "$PWD/citron"
+       run: git config --global --add safe.directory "$PWD/citron"
 
-      - name: Get Nightly Version
-        id: version
-        working-directory: ./citron
-        shell: bash
-        run: |
-          git fetch --tags
-          VERSION=$(git rev-parse --short HEAD)
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+     - name: Cache Homebrew packages
+       uses: actions/cache@v4
+       id: cache-homebrew
+       with:
+         path: ~/Library/Caches/Homebrew
+         key: homebrew-macos-${{ hashFiles('**/brewfile.lock.json') }}
+         restore-keys: |
+           homebrew-macos-
+
+     - name: Cache build artifacts
+       uses: actions/cache@v4
+       id: cache-build
+       with:
+         path: citron/build
+         key: build-macos-universal-${{ needs.check-version.outputs.new_hash }}
+         restore-keys: |
+           build-macos-universal-
+
+     - name: Get Nightly Version
+       id: version
+       working-directory: ./citron
+       shell: bash
+       run: |
+         git fetch --tags
+         VERSION=$(git rev-parse --short HEAD)
+         echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Execute platform build
         run: |

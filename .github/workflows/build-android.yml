@@ -223,6 +223,16 @@ jobs:
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/citron"
 
+      - name: Cache vcpkg dependencies
+        uses: actions/cache@v4
+        id: cache-vcpkg
+        with:
+          path: citron/build/vcpkg_installed
+          key: vcpkg-android-arm64-${{ hashFiles('citron/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-android-arm64-
+            vcpkg-android-
+
       - name: Get Nightly Version
         id: version
         working-directory: ./citron
