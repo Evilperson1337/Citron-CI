@@ -494,7 +494,7 @@ jobs:
       - name: Execute platform build
         run: |
           chmod +x ${{ matrix.platform.build_script }}
-          ${{ matrix.platform.build_script }} "${{ join(matrix.platform.build_args, '" "') }}"
+          ${{ matrix.platform.build_script }} ${{ join(matrix.platform.build_args, ' ') }}
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
