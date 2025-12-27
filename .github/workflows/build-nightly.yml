@@ -107,8 +107,8 @@ jobs:
           echo "hash_short=${{ steps.branch_check.outputs.hash_short }}" >> $GITHUB_OUTPUT
           echo "hash_full=${{ steps.branch_check.outputs.hash_full }}" >> $GITHUB_OUTPUT
 
-      # Clone upstream repo to get version information and source code
-      - name: Clone upstream source
+      # Clone upstream repo to get version information
+      - name: Get latest version
         id: version
         run: |
           git clone --depth 1 --branch "${{ steps.branch_check.outputs.branch_name }}" \
@@ -128,29 +128,13 @@ jobs:
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # Upload source code as artifact
-      - name: Upload source code
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-code-${{ steps.upstream.outputs.hash_short }}
-          path: temp_repo/
-          retention-days: 1
-
-      # Read the last built commit hash from the canonical version tracking file
+      # Read the last built commit hash from the Linux version tracking file
+      # (We use Linux as the canonical source since it's the most commonly built platform)
       - name: Get last built version
         id: last_built
         run: |
-          LAST_HASH=$(cat ci/nightly/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
+          LAST_HASH=$(cat ci/linux/LATEST_VERSION 2>/dev/null | tr -d '\n' || echo "none")
           echo "last_hash=$LAST_HASH" >> $GITHUB_OUTPUT
-          
-      # Get workflow fingerprint (hash of current CI workflow and scripts)
-      - name: Get workflow fingerprint
-        id: workflow_fingerprint
-        run: |
-          # Calculate hash of workflow files and CI scripts
-          WORKFLOW_HASH=$(git rev-parse HEAD:ci)
-          echo "fingerprint=$WORKFLOW_HASH" >> $GITHUB_OUTPUT
-          echo "Workflow fingerprint: $WORKFLOW_HASH"
 
       # This workflow only handles nightly builds (no stable release logic)
       - name: Set build type
@@ -190,41 +174,16 @@ jobs:
       # Determine if a build should be triggered based on:
       # 1. Manual force build override
       # 2. New commits detected in upstream
-      # 3. Workflow/CI scripts changed
-      # 4. No existing release found
-      #    echo "artifact_basename=$BASENAME" >> $GITHUB_OUTPUT
-      #    echo "Generated basename: $BASENAME"
-
-      # Determine if a build should be triggered based on:
-      # 1. Manual force build override
-      # 2. New commits detected in upstream
-      # 3. Workflow/CI scripts changed
-      # 4. No existing release found
+      # 3. No existing release found
       - name: Compare versions
         id: compare
         run: |
-          UPSTREAM_HASH="${{ steps.upstream.outputs.hash_short }}"
-          LAST_BUILT="${{ steps.last_built.outputs.last_hash }}"
-          WORKFLOW_FINGERPRINT="${{ steps.workflow_fingerprint.outputs.fingerprint }}"
-          
-          # Parse last built entry (format: <upstream-hash>:<workflow-hash> or just <hash> for legacy)
-          if [[ "$LAST_BUILT" == *":"* ]]; then
-            LAST_UPSTREAM=$(echo "$LAST_BUILT" | cut -d: -f1)
-            LAST_WORKFLOW=$(echo "$LAST_BUILT" | cut -d: -f2)
-          else
-            LAST_UPSTREAM="$LAST_BUILT"
-            LAST_WORKFLOW="legacy"
-          fi
-          
           if [ "${{ github.event.inputs.force_build }}" = "true" ]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "Forced build requested"
-          elif [ "$UPSTREAM_HASH" != "$LAST_UPSTREAM" ]; then
+          elif [ "${{ steps.upstream.outputs.hash_short }}" != "${{ steps.last_built.outputs.last_hash }}" ]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "New upstream version detected"
-          elif [ "$WORKFLOW_FINGERPRINT" != "$LAST_WORKFLOW" ]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
-            echo "Workflow/CI scripts changed"
+            echo "New version detected"
           elif [ "${{ steps.release_check.outputs.exists }}" != "true" ]; then
             echo "should_build=true" >> $GITHUB_OUTPUT
             echo "No release exists"
@@ -260,10 +219,12 @@ jobs:
               build_arg: ""
               container: "ghcr.io/pkgforge-dev/archlinux:latest"
               timeout: 120
-              build_script: ci/linux/build.sh
-              build_args: ["x86_64", "${{ needs.check-version.outputs.artifact_basename }}"]
+              build_script: |
+                chmod +x ci/linux/build.sh
+                ci/linux/build.sh x86_64 "${{ needs.check-version.outputs.artifact_basename }}"
               artifact_path: |
-                emulator/dist/*.AppImage*
+                emulator/dist/*.AppImage
+                emulator/dist/*.zsync
                 emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64"  # Platform suffix appended to basename
 
@@ -277,10 +238,12 @@ jobs:
               build_arg: "v3"
               container: "ghcr.io/pkgforge-dev/archlinux:latest"
               timeout: 120
-              build_script: ci/linux/build.sh
-              build_args: ["x86_64_v3", "${{ needs.check-version.outputs.artifact_basename }}", "v3"]
+              build_script: |
+                chmod +x ci/linux/build.sh
+                ci/linux/build.sh x86_64_v3 "${{ needs.check-version.outputs.artifact_basename }}" v3
               artifact_path: |
                 emulator/dist/*.AppImage*
+                emulator/dist/*.zsync
                 emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64-v3"
 
@@ -294,10 +257,12 @@ jobs:
               build_arg: ""
               container: "ghcr.io/pkgforge-dev/archlinux:latest"
               timeout: 120
-              build_script: ci/linux/build.sh
-              build_args: ["aarch64", "${{ needs.check-version.outputs.artifact_basename }}"]
+              build_script: |
+                chmod +x ci/linux/build.sh
+                ci/linux/build.sh aarch64 "${{ needs.check-version.outputs.artifact_basename }}"
               artifact_path: |
                 emulator/dist/*.AppImage*
+                emulator/dist/*.zsync
                 emulator/dist/*.tar.zst
               artifact_suffix: "-linux-arm64"
 
@@ -308,8 +273,8 @@ jobs:
               arch: "x86_64"
               artifact_name: "windows-amd64"
               timeout: 360
-              build_script: ci/windows/build.ps1
-              build_args: ["-Arch", "x86_64", "-ArtifactBasename", "${{ needs.check-version.outputs.artifact_basename }}"]
+              build_script: |
+                ci/windows/build.ps1 -Arch x86_64 -ArtifactBasename "${{ needs.check-version.outputs.artifact_basename }}"
               shell: pwsh
               artifact_path: "emulator/dist/*.zip"
               artifact_suffix: "-windows-amd64"
@@ -374,8 +339,9 @@ jobs:
               arch: "universal"
               artifact_name: "macos"
               timeout: 180
-              build_script: ci/macos/build.sh
-              build_args: ["${{ needs.check-version.outputs.artifact_basename }}"]
+              build_script: |
+                chmod +x ci/macos/build.sh
+                ci/macos/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
               artifact_path: "citron/dist/*.dmg"
               artifact_suffix: "-macos-universal"
 
@@ -386,8 +352,9 @@ jobs:
               arch: "arm64-v8a"
               artifact_name: "android"
               timeout: 240
-              build_script: ci/android/build.sh
-              build_args: ["${{ needs.check-version.outputs.artifact_basename }}"]
+              build_script: |
+                chmod +x ci/android/build.sh
+                ci/android/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
               artifact_path: "citron/dist/*.apk"
               artifact_suffix: "-android-arm64"
 
@@ -418,63 +385,10 @@ jobs:
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
 
-      - name: Download source code
-        uses: actions/download-artifact@v4
-        with:
-          name: source-code-${{ needs.check-version.outputs.new_hash }}
-          path: emulator
-
-      - name: Initialize and update submodules
-        working-directory: ./emulator
-        run: |
-          git submodule init
-          git submodule update --recursive
-
-      - name: Cache build artifacts (Linux)
-        if: runner.os == 'Linux' && matrix.platform.runs_on != 'windows-latest' && matrix.platform.runs_on != 'windows-11-arm' && matrix.platform.arch != 'arm64-v8a'
-        uses: actions/cache@v4
-        id: cache-build-linux
-        with:
-          path: emulator/build
-          key: build-linux-${{ matrix.platform.arch }}-${{ needs.check-version.outputs.new_hash }}
-          restore-keys: |
-            build-linux-${{ matrix.platform.arch }}-
-
-      - name: Cache Homebrew packages (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/cache@v4
-        id: cache-homebrew-macos
-        with:
-          path: ~/Library/Caches/Homebrew
-          key: homebrew-macos-${{ hashFiles('**/brewfile.lock.json') }}
-          restore-keys: |
-            homebrew-macos-
-
-      - name: Cache build artifacts (macOS)
-        if: runner.os == 'macOS'
-        uses: actions/cache@v4
-        id: cache-build-macos
-        with:
-          path: emulator/build
-          key: build-macos-universal-${{ needs.check-version.outputs.new_hash }}
-          restore-keys: |
-            build-macos-universal-
-
-      - name: Cache vcpkg dependencies (Android)
-        if: matrix.platform.arch == 'arm64-v8a'
-        uses: actions/cache@v4
-        id: cache-vcpkg-android
-        with:
-          path: emulator/build/vcpkg_installed
-          key: vcpkg-android-arm64-${{ hashFiles('emulator/vcpkg.json') }}
-          restore-keys: |
-            vcpkg-android-arm64-
-            vcpkg-android-
-
       - name: Cache vcpkg and Qt dependencies (Windows)
         if: matrix.platform.runs_on == 'windows-latest' || matrix.platform.runs_on == 'windows-11-arm'
         uses: actions/cache@v4
-        id: cache-vcpkg-windows
+        id: cache-vcpkg
         with:
           # The path contains both the vcpkg installed libs and the downloaded Qt binaries
           path: emulator/build
@@ -482,7 +396,6 @@ jobs:
           key: vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-${{ hashFiles('emulator/vcpkg.json') }}
           restore-keys: |
             vcpkg-qt-cache-${{ matrix.platform.arch }}-${{ runner.os }}-
-
       - name: Get Nightly Version
         id: version
         working-directory: ./emulator
@@ -493,8 +406,7 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
       - name: Execute platform build
         run: |
-          chmod +x ${{ matrix.platform.build_script }}
-          ${{ matrix.platform.build_script }} "${{ join(matrix.platform.build_args, '" "') }}"
+          ${{ matrix.platform.build_script }}
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -581,25 +493,6 @@ jobs:
           echo "$RELEASE_BODY" | head -c 1000
           echo "..."
 
-      - name: Delete old release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG_NAME="${{ needs.check-version.outputs.tag_name }}"
-          
-          # Get all assets for the release
-          ASSET_IDS=$(gh release view "$TAG_NAME" --repo "${{ github.repository }}" --json assets --jq '.assets[].id' 2>/dev/null || echo "")
-          
-          if [ -n "$ASSET_IDS" ]; then
-            echo "Deleting old assets..."
-            for ASSET_ID in $ASSET_IDS; do
-              echo "Deleting asset ID: $ASSET_ID"
-              gh release delete-asset "$TAG_NAME" "$ASSET_ID" --repo "${{ github.repository }}" --yes || true
-            done
-          else
-            echo "No existing assets found"
-          fi
-
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -612,28 +505,23 @@ jobs:
           files: ./release-files/*
           body_path: release-notes.md
 
-      - name: Update canonical and platform-specific version files
+      - name: Update platform-specific version files
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Get new hash and workflow fingerprint
+          # Update all platform-specific version files
           NEW_HASH="${{ needs.check-version.outputs.new_hash }}"
-          WORKFLOW_FINGERPRINT="${{ steps.workflow_fingerprint.outputs.fingerprint }}"
           
-          # Update canonical version file with both upstream hash and workflow fingerprint
-          echo "${NEW_HASH}:${WORKFLOW_FINGERPRINT}" > ci/nightly/LATEST_VERSION
-          
-          # Mirror to platform-specific files (for backward compatibility and reference)
           echo "$NEW_HASH" > ci/linux/LATEST_VERSION
           echo "$NEW_HASH" > ci/windows/LATEST_VERSION
           echo "$NEW_HASH" > ci/macos/LATEST_VERSION
           echo "$NEW_HASH" > ci/android/LATEST_VERSION
           
           # Add and commit all version files
-          git add ci/nightly/LATEST_VERSION ci/linux/LATEST_VERSION ci/windows/LATEST_VERSION ci/macos/LATEST_VERSION ci/android/LATEST_VERSION
-          git commit -m "Update version files to ${NEW_HASH}:${WORKFLOW_FINGERPRINT} [skip ci]" || exit 0
+          git add ci/linux/LATEST_VERSION ci/windows/LATEST_VERSION ci/macos/LATEST_VERSION ci/android/LATEST_VERSION
+          git commit -m "Update platform version files to $NEW_HASH [skip ci]" || exit 0
           
           # Retry push with backoff
           for i in {1..5}; do
