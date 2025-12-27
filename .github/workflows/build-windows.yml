@@ -346,6 +346,25 @@ jobs:
           echo "$RELEASE_BODY" | head -c 1000
           echo "..."
 
+      - name: Delete old release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ needs.check-version.outputs.tag_name }}"
+          
+          # Get all assets for the release
+          ASSET_IDS=$(gh release view "$TAG_NAME" --repo "${{ github.repository }}" --json assets --jq '.assets[].id' 2>/dev/null || echo "")
+          
+          if [ -n "$ASSET_IDS" ]; then
+            echo "Deleting old assets..."
+            for ASSET_ID in $ASSET_IDS; do
+              echo "Deleting asset ID: $ASSET_ID"
+              gh release delete-asset "$TAG_NAME" "$ASSET_ID" --repo "${{ github.repository }}" --yes || true
+            done
+          else
+            echo "No existing assets found"
+          fi
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
