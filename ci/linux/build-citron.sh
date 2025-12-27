@@ -1,6 +1,12 @@
 #!/bin/sh
 set -ex
 
+# --- Setup ccache ---
+export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
+export CCACHE_COMPILERCHECK=content
+export CCACHE_SLOPPINESS=time_macros
+ccache --show-stats || true
+
 # --- Architecture and Compiler Flag Setup ---
 ARCH="${ARCH:-$(uname -m)}"
 
@@ -50,6 +56,7 @@ mkdir build && cd build
 # Configure the build using CMake
 cmake .. -GNinja \
     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     -DCITRON_USE_BUNDLED_VCPKG=OFF \
     -DCITRON_USE_BUNDLED_QT=OFF \
     -DUSE_SYSTEM_QT=ON \
@@ -83,6 +90,12 @@ cmake .. -GNinja \
 # Compile and install the project
 ninja -j${JOBS}
 sudo ninja install
+
+# --- Show ccache statistics ---
+echo "========================================"
+echo "ccache statistics:"
+echo "========================================"
+ccache --show-stats
 
 # --- Output Version Info ---
 echo "$VERSION" >~/version

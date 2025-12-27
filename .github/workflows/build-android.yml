@@ -236,13 +236,20 @@ jobs:
               artifact_suffix: "-android-arm64-snapdragon"
 
     env:
-      GIT_SHA: ${{ needs.check-version.outputs.new_hash }}
-      GIT_SHA_FULL: ${{ needs.check-version.outputs.new_hash_full }}
-      UPSTREAM_BRANCH: ${{ needs.check-version.outputs.branch_name }}
+       GIT_SHA: ${{ needs.check-version.outputs.new_hash }}
+       GIT_SHA_FULL: ${{ needs.check-version.outputs.new_hash_full }}
+       UPSTREAM_BRANCH: ${{ needs.check-version.outputs.branch_name }}
+       CCACHE_DIR: ${{ github.workspace }}/.ccache
 
-    steps:
-      - name: Checkout workflow scripts
-        uses: actions/checkout@v4
+     steps:
+       - name: Checkout workflow scripts
+         uses: actions/checkout@v4
+         
+       - name: Setup ccache
+         uses: hendrikmuhs/ccache-action@v1.2
+         with:
+           key: android-arm64
+           max-size: 500M
 
       - name: Clone upstream source
         shell: bash

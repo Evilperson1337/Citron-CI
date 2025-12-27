@@ -14,7 +14,7 @@ echo "========================================"
 # Install dependencies
 echo "Installing system dependencies..."
 sudo apt-get update -qq
-sudo apt-get install -y -qq wget unzip curl git cmake build-essential pkg-config zip glslang-tools nasm perl autoconf automake libtool yasm
+sudo apt-get install -y -qq wget unzip curl git cmake build-essential pkg-config zip glslang-tools nasm perl autoconf automake libtool yasm ccache
 
 # Setup JDK 17
 echo "Setting up JDK 17..."

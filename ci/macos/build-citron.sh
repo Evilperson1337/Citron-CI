@@ -7,6 +7,12 @@
 
 set -e
 
+# --- Setup ccache ---
+export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
+export CCACHE_COMPILERCHECK=content
+export CCACHE_SLOPPINESS=time_macros
+ccache --show-stats || true
+
 echo "========================================"
 echo "Building Citron for macOS"
 echo "========================================"
@@ -51,6 +57,7 @@ echo "Configuring CMake..."
 OPENAL_DIR="$(brew --prefix openal-soft)"
 SDL2_DIR="$(brew --prefix sdl2)"
 cmake -B build -S . -G "Ninja" \
+  -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -69,6 +76,12 @@ cmake -B build -S . -G "Ninja" \
 # Build Citron
 echo "Building Citron..."
 cmake --build build --config Release
+
+# --- Show ccache statistics ---
+echo "========================================"
+echo "ccache statistics:"
+echo "========================================"
+ccache --show-stats
 
 echo "========================================"
 echo "Build completed successfully!"

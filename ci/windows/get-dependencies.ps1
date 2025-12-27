@@ -14,6 +14,18 @@ Write-Host "Installing Windows Dependencies"
 Write-Host "Architecture: $Arch"
 Write-Host "========================================"
 
+# Install Chocolatey (if not already installed)
+if (!(Get-Command choco -ErrorAction SilentlyContinue)) {
+    Write-Host "Installing Chocolatey..."
+    Set-ExecutionPolicy Bypass -Scope Process -Force
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+    Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+}
+
+# Install sccache (ccache alternative for Windows)
+Write-Host "Installing sccache..."
+choco install sccache -y
+
 # Install Vulkan SDK (version 1.4.335.0)
 Write-Host "Installing Vulkan SDK..."
 if ($Arch -eq "x86_64") {

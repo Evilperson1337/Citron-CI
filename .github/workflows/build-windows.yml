@@ -201,15 +201,22 @@ jobs:
               artifact_suffix: "-windows-arm64"
 
     env:
-      GIT_SHA: ${{ needs.check-version.outputs.new_hash }}
-      GIT_SHA_FULL: ${{ needs.check-version.outputs.new_hash_full }}
-      UPSTREAM_BRANCH: ${{ needs.check-version.outputs.branch_name }}
+       GIT_SHA: ${{ needs.check-version.outputs.new_hash }}
+       GIT_SHA_FULL: ${{ needs.check-version.outputs.new_hash_full }}
+       UPSTREAM_BRANCH: ${{ needs.check-version.outputs.branch_name }}
+       SCCACHE_DIR: ${{ github.workspace }}\.sccache
 
-    steps:
-      - name: Checkout workflow scripts
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+     steps:
+       - name: Checkout workflow scripts
+         uses: actions/checkout@v4
+         with:
+           persist-credentials: false
+           
+       - name: Install sccache
+         shell: pwsh
+         run: |
+           choco install sccache -y
+           sccache --version
 
       - name: Add msbuild to PATH
         if: matrix.platform.arch == 'x86_64'

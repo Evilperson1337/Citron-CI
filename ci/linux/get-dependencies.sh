@@ -8,6 +8,7 @@ pacman -Syu --noconfirm --needed \
 	boost               \
 	boost-libs          \
 	catch2              \
+	ccache              \
 	clang               \
 	cmake               \
 	curl                \
