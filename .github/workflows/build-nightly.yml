@@ -192,8 +192,8 @@ jobs:
       # 2. New commits detected in upstream
       # 3. Workflow/CI scripts changed
       # 4. No existing release found
-          echo "artifact_basename=$BASENAME" >> $GITHUB_OUTPUT
-          echo "Generated basename: $BASENAME"
+      #    echo "artifact_basename=$BASENAME" >> $GITHUB_OUTPUT
+      #    echo "Generated basename: $BASENAME"
 
       # Determine if a build should be triggered based on:
       # 1. Manual force build override
