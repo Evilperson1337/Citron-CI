@@ -71,9 +71,10 @@ if [ ! -d "emulator" ]; then
 fi
 log_success "Source directory found"
  
-# Configure CMake for Android
+# Store original directory and configure CMake for Android
 log_info "Configuring CMake for Android"
-cd emulator
+BUILD_DIR="$(pwd)/emulator"
+cd "$BUILD_DIR"
 cmake -B build-android -S . \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DCMAKE_BUILD_TYPE=Release \

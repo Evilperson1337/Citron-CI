@@ -434,6 +434,7 @@ jobs:
           echo "Verifying source download..."
           ls -la emulator/
           cd emulator && git log -1 --oneline
+        shell: bash
 
       # Cache Android SDK, Gradle, and Maven dependencies
       - name: Cache Android dependencies
@@ -514,15 +515,9 @@ jobs:
           name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}-logs
           path: |
             emulator/build/**/*.log
-            citron/build/**/*.log
             emulator/**/CMake*.txt
-            citron/**/CMake*.txt
             emulator/**/CMake*.log
-            citron/**/CMake*.log
             emulator/**/*.log
-            citron/**/*.log
-            citron/src/android/**/*.log
-            citron/src/android/**/build/**/*.log
           retention-days: 7
           if-no-files-found: ignore
 

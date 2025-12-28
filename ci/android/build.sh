@@ -24,18 +24,18 @@ ORIGINAL_DIR="$(pwd)"
 # Install dependencies
 echo "Installing dependencies..."
 chmod +x ci/android/get-dependencies.sh
-source ci/android/get-dependencies.sh
-
+bash ci/android/get-dependencies.sh
+ 
 # Build Citron
 echo "Building Citron..."
 chmod +x ci/android/build-citron.sh
-source ci/android/build-citron.sh
-
+bash ci/android/build-citron.sh
+ 
 # Package the build
 echo "Packaging build..."
 cd "$ORIGINAL_DIR"
 chmod +x ci/android/package-citron.sh
-source ci/android/package-citron.sh "$ARTIFACT_BASENAME"
+bash ci/android/package-citron.sh "$ARTIFACT_BASENAME"
 
 echo "========================================"
 echo "Build completed successfully!"
