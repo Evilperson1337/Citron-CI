@@ -11,6 +11,17 @@ echo "========================================"
 echo "Installing Android Dependencies"
 echo "========================================"
 
+# Check if Android SDK is already cached
+if [ -d "$ANDROID_HOME" ] && [ -d "$ANDROID_NDK_HOME" ]; then
+    echo "Using cached Android SDK and NDK..."
+    echo "ANDROID_HOME: $ANDROID_HOME"
+    echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+    echo "========================================"
+    echo "Dependencies already available from cache!"
+    echo "========================================"
+    exit 0
+fi
+
 # Install dependencies
 echo "Installing system dependencies..."
 sudo apt-get update -qq

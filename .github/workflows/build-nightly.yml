@@ -385,6 +385,49 @@ jobs:
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
 
+      # Cache Android SDK, Gradle, and Maven dependencies
+      - name: Cache Android dependencies
+        if: matrix.platform.name == 'Android'
+        uses: actions/cache@v4
+        id: cache-android
+        with:
+          path: |
+            ~/.android/build-cache
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.m2/repository
+            android-sdk
+            ~/.ccache
+          key: android-deps-${{ needs.check-version.outputs.new_hash }}-${{ hashFiles('ci/android/get-dependencies.sh', 'ci/android/build-citron.sh') }}
+          restore-keys: |
+            android-deps-${{ needs.check-version.outputs.new_hash }}-
+            android-deps-
+            gradle-deps-
+            maven-deps-
+            ccache-
+
+      # Set Android environment variables to use cached dependencies
+      - name: Set Android environment variables
+        if: matrix.platform.name == 'Android'
+        run: |
+          echo "ANDROID_HOME=$PWD/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$PWD/android-sdk/ndk/26.1.10909125" >> $GITHUB_ENV
+          echo "$PWD/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "GRADLE_OPTS=-Dorg.gradle.daemon=false" >> $GITHUB_ENV
+          echo "GRADLE_USER_HOME=$PWD/.gradle" >> $GITHUB_ENV
+
+      # Show cache status for debugging
+      - name: Show cache status
+        if: matrix.platform.name == 'Android'
+        run: |
+          echo "Cache hit: ${{ steps.cache-android.outputs.cache-hit }}"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+          ls -la android-sdk 2>/dev/null || echo "android-sdk directory not found"
+          ls -la ~/.gradle 2>/dev/null || echo "Gradle cache not found"
+          ls -la ~/.m2 2>/dev/null || echo "Maven cache not found"
+          ls -la ~/.ccache 2>/dev/null || echo "ccache directory not found"
+
       - name: Cache vcpkg and Qt dependencies (Windows)
         if: matrix.platform.runs_on == 'windows-latest' || matrix.platform.runs_on == 'windows-11-arm'
         uses: actions/cache@v4
