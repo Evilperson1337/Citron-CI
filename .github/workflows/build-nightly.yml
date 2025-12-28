@@ -426,6 +426,9 @@ jobs:
       - name: Extract source tarball
         run: tar xzf source.tar.gz
       
+      - name: Mark safe directory
+        run: git config --global --add safe.directory "$PWD/emulator"
+
       - name: Verify source download
         run: |
           echo "Verifying source download..."
