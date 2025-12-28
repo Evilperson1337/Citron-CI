@@ -69,10 +69,9 @@ else
 fi
 
 # --- Source Code Checkout and Versioning ---
-log_section "Cloning Citron Source Code"
-retry_operation git clone --recursive "https://git.citron-emu.org/citron/emulator.git" ./citron
-cd ./citron
-log_success "Repository cloned successfully"
+log_section "Using Downloaded Source Code"
+cd ./emulator
+log_success "Source directory found"
 
 if [ "$DEVEL" = 'true' ]; then
     CITRON_TAG="$(git rev-parse --short HEAD)"

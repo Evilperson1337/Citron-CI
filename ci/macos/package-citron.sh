@@ -16,7 +16,6 @@ echo "========================================"
 
 # Package macOS Build
 echo "Packaging macOS build..."
-cd citron
 mkdir -p dist
 
 # Find the .app bundle

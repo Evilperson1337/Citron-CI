@@ -35,5 +35,5 @@ ci/macos/package-citron.sh "$ARTIFACT_BASENAME"
 
 echo "========================================"
 echo "Build completed successfully!"
-echo "Artifacts located in: $(pwd)/citron/dist/"
+echo "Artifacts located in: $(pwd)/emulator/dist/"
 echo "========================================"

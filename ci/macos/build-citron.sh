@@ -64,13 +64,18 @@ mkdir -p "$CCACHE_DIR"
 ccache --show-stats || true
 
 log_section "Building Citron for macOS"
-
-# Clone Citron Source with retry logic
-log_info "Cloning Citron source repository"
-retry_operation git clone --recursive "https://git.citron-emu.org/Citron/Emulator.git" citron
-log_success "Repository cloned successfully"
-
-cd citron
+ 
+# Use already downloaded source from artifact
+log_info "Using downloaded source from emulator/"
+if [ ! -d "emulator" ]; then
+    log_error "emulator/ directory not found!"
+    log_error "Expected to find source code in $(pwd)/emulator/"
+    ls -la
+    exit 1
+fi
+log_success "Source directory found"
+ 
+cd emulator
 
 # Patch AGL in Qt FindWrapOpenGL.cmake
 log_info "Patching Qt FindWrapOpenGL.cmake"

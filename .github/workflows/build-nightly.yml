@@ -224,11 +224,14 @@ jobs:
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
 
+      - name: Create source tarball
+        run: tar czf source.tar.gz emulator/
+
       - name: Upload source as artifact
         uses: actions/upload-artifact@v4
         with:
           name: source-${{ needs.check-version.outputs.new_hash }}
-          path: emulator/
+          path: source.tar.gz
           retention-days: 1
           if-no-files-found: error
 
@@ -383,7 +386,7 @@ jobs:
               build_script: |
                 chmod +x ci/macos/build.sh
                 ci/macos/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "citron/dist/*.dmg"
+              artifact_path: "emulator/dist/*.dmg"
               artifact_suffix: "-macos-universal"
 
           # Android
@@ -396,7 +399,7 @@ jobs:
               build_script: |
                 chmod +x ci/android/build.sh
                 ci/android/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "citron/dist/*.apk"
+              artifact_path: "emulator/dist/*.apk"
               artifact_suffix: "-android-arm64"
 
     container: ${{ matrix.platform.container || null }}
@@ -419,6 +422,9 @@ jobs:
         with:
           name: ${{ needs.download-source.outputs.source_artifact_name }}
           path: ./
+      
+      - name: Extract source tarball
+        run: tar xzf source.tar.gz
       
       - name: Verify source download
         run: |
