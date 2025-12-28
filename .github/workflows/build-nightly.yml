@@ -222,7 +222,10 @@ jobs:
               build_script: |
                 chmod +x ci/linux/build.sh
                 ci/linux/build.sh x86_64 "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_path: |
+                emulator/dist/*.AppImage
+                emulator/dist/*.zsync
+                emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64"  # Platform suffix appended to basename
 
           # Linux x86_64_v3
@@ -238,7 +241,10 @@ jobs:
               build_script: |
                 chmod +x ci/linux/build.sh
                 ci/linux/build.sh x86_64_v3 "${{ needs.check-version.outputs.artifact_basename }}" v3
-              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_path: |
+                emulator/dist/*.AppImage*
+                emulator/dist/*.zsync
+                emulator/dist/*.tar.zst
               artifact_suffix: "-linux-amd64-v3"
 
           # Linux aarch64
@@ -254,7 +260,10 @@ jobs:
               build_script: |
                 chmod +x ci/linux/build.sh
                 ci/linux/build.sh aarch64 "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "emulator/dist/*.AppImage*"
+              artifact_path: |
+                emulator/dist/*.AppImage*
+                emulator/dist/*.zsync
+                emulator/dist/*.tar.zst
               artifact_suffix: "-linux-arm64"
 
           # Windows x86_64
@@ -376,6 +385,49 @@ jobs:
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
 
+      # Cache Android SDK, Gradle, and Maven dependencies
+      - name: Cache Android dependencies
+        if: matrix.platform.name == 'Android'
+        uses: actions/cache@v4
+        id: cache-android
+        with:
+          path: |
+            ~/.android/build-cache
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.m2/repository
+            android-sdk
+            ~/.ccache
+          key: android-deps-${{ needs.check-version.outputs.new_hash }}-${{ hashFiles('ci/android/get-dependencies.sh', 'ci/android/build-citron.sh') }}
+          restore-keys: |
+            android-deps-${{ needs.check-version.outputs.new_hash }}-
+            android-deps-
+            gradle-deps-
+            maven-deps-
+            ccache-
+
+      # Set Android environment variables to use cached dependencies
+      - name: Set Android environment variables
+        if: matrix.platform.name == 'Android'
+        run: |
+          echo "ANDROID_HOME=$PWD/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$PWD/android-sdk/ndk/26.1.10909125" >> $GITHUB_ENV
+          echo "$PWD/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "GRADLE_OPTS=-Dorg.gradle.daemon=false" >> $GITHUB_ENV
+          echo "GRADLE_USER_HOME=$PWD/.gradle" >> $GITHUB_ENV
+
+      # Show cache status for debugging
+      - name: Show cache status
+        if: matrix.platform.name == 'Android'
+        run: |
+          echo "Cache hit: ${{ steps.cache-android.outputs.cache-hit }}"
+          echo "ANDROID_HOME: $ANDROID_HOME"
+          echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+          ls -la android-sdk 2>/dev/null || echo "android-sdk directory not found"
+          ls -la ~/.gradle 2>/dev/null || echo "Gradle cache not found"
+          ls -la ~/.m2 2>/dev/null || echo "Maven cache not found"
+          ls -la ~/.ccache 2>/dev/null || echo "ccache directory not found"
+
       - name: Cache vcpkg and Qt dependencies (Windows)
         if: matrix.platform.runs_on == 'windows-latest' || matrix.platform.runs_on == 'windows-11-arm'
         uses: actions/cache@v4
@@ -406,6 +458,25 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}-logs
+          path: |
+            emulator/build/**/*.log
+            citron/build/**/*.log
+            emulator/**/CMake*.txt
+            citron/**/CMake*.txt
+            emulator/**/CMake*.log
+            citron/**/CMake*.log
+            emulator/**/*.log
+            citron/**/*.log
+            citron/src/android/**/*.log
+            citron/src/android/**/build/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
   # ============================================================
   # Create Unified Release
   # ============================================================
@@ -414,7 +485,7 @@ jobs:
     needs: [check-version, build-matrix]
     if: |
       needs.check-version.outputs.should_build == 'true' && 
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/new-build-process')
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build-improvements')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -429,44 +500,12 @@ jobs:
           path: ./release-artifacts
           pattern: "*"
 
-      - name: Flatten and rename artifacts
+      - name: Copy artifacts to release directory
         run: |
           mkdir -p ./release-files
           
-          # Function to determine file extension
-          get_extension() {
-            local file="$1"
-            case "$file" in
-              *.AppImage*) echo ".AppImage" ;;
-              *.zip) echo ".zip" ;;
-              *.dmg) echo ".dmg" ;;
-              *.apk) echo ".apk" ;;
-              *.tar.zst) echo ".tar.zst" ;;
-              *) echo "" ;;
-            esac
-          }
-          
-          # Copy and rename artifacts based on their directory names
-          for dir in ./release-artifacts/*/; do
-            if [ -d "$dir" ]; then
-              artifact_name=$(basename "$dir")
-              
-              # Find the actual file
-              file=$(find "$dir" -type f \( -name "*.AppImage*" -o -name "*.zip" -o -name "*.dmg" -o -name "*.apk" -o -name "*.tar.zst" \) | head -n 1)
-              
-              if [ -n "$file" ] && [ -f "$file" ]; then
-                ext=$(get_extension "$file")
-                if [ -n "$ext" ]; then
-                  # Extract the suffix from the artifact name (everything after the basename)
-                  suffix="${artifact_name#${{ needs.check-version.outputs.artifact_basename }}}"
-                  new_name="${{ needs.check-version.outputs.artifact_basename }}$suffix$ext"
-                  
-                  echo "Renaming: $artifact_name -> $new_name"
-                  cp "$file" "./release-files/$new_name"
-                fi
-              fi
-            fi
-          done
+          # Copy all artifacts from subdirectories (including zsync files)
+          find ./release-artifacts -type f \( -name "*.AppImage*" -o -name "*.zip" -o -name "*.dmg" -o -name "*.apk" -o -name "*.tar.zst" -o -name "*.zsync" \) -exec cp {} ./release-files/ \;
           
           echo "Artifacts found:"
           ls -lh ./release-files/

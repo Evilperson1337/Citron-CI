@@ -236,13 +236,20 @@ jobs:
               artifact_suffix: "-android-arm64-snapdragon"
 
     env:
-      GIT_SHA: ${{ needs.check-version.outputs.new_hash }}
-      GIT_SHA_FULL: ${{ needs.check-version.outputs.new_hash_full }}
-      UPSTREAM_BRANCH: ${{ needs.check-version.outputs.branch_name }}
+       GIT_SHA: ${{ needs.check-version.outputs.new_hash }}
+       GIT_SHA_FULL: ${{ needs.check-version.outputs.new_hash_full }}
+       UPSTREAM_BRANCH: ${{ needs.check-version.outputs.branch_name }}
+       CCACHE_DIR: ${{ github.workspace }}/.ccache
 
     steps:
       - name: Checkout workflow scripts
         uses: actions/checkout@v4
+        
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: android-arm64
+          max-size: 500M
 
       - name: Clone upstream source
         shell: bash
@@ -278,6 +285,21 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}-logs
+          path: |
+            citron/build/**/*.log
+            citron/**/CMake*.txt
+            citron/**/CMake*.log
+            citron/**/*.log
+            citron/src/android/**/*.log
+            citron/src/android/**/build/**/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
   # ============================================================
   # Create Unified Release
   # ============================================================
@@ -301,28 +323,12 @@ jobs:
           path: ./release-artifacts
           pattern: "*"
 
-      - name: Flatten and rename artifacts
+      - name: Copy artifacts to release directory
         run: |
           mkdir -p ./release-files
           
-          # Copy and rename artifacts based on their directory names
-          for dir in ./release-artifacts/*/; do
-            if [ -d "$dir" ]; then
-              artifact_name=$(basename "$dir")
-              
-              # Find the APK file
-              file=$(find "$dir" -type f -name "*.apk" | head -n 1)
-              
-              if [ -n "$file" ] && [ -f "$file" ]; then
-                # Extract the suffix from the artifact name (everything after the basename)
-                suffix="${artifact_name#${{ needs.check-version.outputs.artifact_basename }}}"
-                new_name="${{ needs.check-version.outputs.artifact_basename }}$suffix.apk"
-                
-                echo "Renaming: $artifact_name -> $new_name"
-                cp "$file" "./release-files/$new_name"
-              fi
-            fi
-          done
+          # Simply copy all artifacts from subdirectories
+          find ./release-artifacts -type f -name "*.apk" -exec cp {} ./release-files/ \;
           
           echo "Artifacts found:"
           ls -lh ./release-files/
@@ -386,27 +392,3 @@ jobs:
             fi
             sleep $((2**i))
           done
-
-      - name: Post to Discord
-        if: success()
-        run: |
-          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/tag/${{ needs.check-version.outputs.tag_name }}"
-          
-          if [ "${{ needs.check-version.outputs.branch_name }}" = "feature/android-game-file-extraction" ]; then
-            BRANCH_EMOJI="🍋"
-            BRANCH_DESC="Game File Extraction"
-            EXPERIMENTAL_FEATURES="\n🔬 **New Features:**\n• RomFS dumping support\n• ExeFS dumping support\n• Custom dump location selection"
-          else
-            BRANCH_EMOJI="📦"
-            BRANCH_DESC="Main Branch"
-            EXPERIMENTAL_FEATURES=""
-          fi
-          
-          WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK }}"
-          if [ -z "$WEBHOOK_URL" ]; then
-            WEBHOOK_URL="https://discord.com/api/webhooks/1428304731809517588/fG7t7MBprKFss5oGcI05DIFM3JdO41Z0juSV_zOfb9K-UTvyI2fd3-Ciwi48npWXYHLb"
-          fi
-          
-          curl -H "Content-Type: application/json" \
-               -d "{\"content\":\"🤖 **New Android Build Available!**\n\n📦 **Version:** \`${{ needs.check-version.outputs.new_hash }}\`\n📅 **Date:** $(date +%Y-%m-%d)\n$BRANCH_EMOJI **Branch:** $BRANCH_DESC$EXPERIMENTAL_FEATURES\n🔗 **Download:** $DOWNLOAD_URL\"}" \
-               "$WEBHOOK_URL"

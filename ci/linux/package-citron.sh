@@ -30,7 +30,8 @@ if [ "$ARCH_SUFFIX" = "_v3" ]; then
 fi
 
 # Construct unique names for the AppImage and tarball based on the build matrix.
-OUTNAME_BASE="Citron-v${VERSION}-nightly.${HASH}-linux-${ARCH_NAME}${MODIFIERS}"
+# Use consistent naming with the workflow: Citron-Nightly_<hash>
+OUTNAME_BASE="Citron-Nightly_${HASH}-linux-${ARCH_NAME}${MODIFIERS}"
 export OUTNAME_APPIMAGE="${OUTNAME_BASE}.AppImage"
 export OUTNAME_TAR="${OUTNAME_BASE}.tar.zst"
 

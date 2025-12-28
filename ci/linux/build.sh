@@ -10,7 +10,7 @@
 #   artifact_basename: Base name for the output artifact
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 # Parse arguments
 ARCH="${1:-x86_64}"
@@ -54,35 +54,13 @@ export DEVEL="true"
 # Package the build
 ./package-citron.sh
 
-# Rename AppImage to follow naming convention
-echo "Renaming AppImage to follow naming convention..."
+# Verify artifacts are in the correct location
+echo "Verifying artifacts in dist directory..."
 cd dist
 
-# Determine architecture suffix for filename
-case "$ARCH" in
-  x86_64)
-    ARCH_SUFFIX="-linux-amd64"
-    ;;
-  x86_64_v3)
-    ARCH_SUFFIX="-linux-amd64-v3"
-    ;;
-  aarch64)
-    ARCH_SUFFIX="-linux-arm64"
-    ;;
-  *)
-    ARCH_SUFFIX="-linux-unknown"
-    ;;
-esac
-
-# Rename all AppImage files
-for file in *.AppImage*; do
-  if [ -f "$file" ]; then
-    ext="${file##*.}"
-    new_name="${ARTIFACT_BASENAME}${ARCH_SUFFIX}.${ext}"
-    echo "Renaming: $file -> $new_name"
-    mv "$file" "$new_name"
-  fi
-done
+# List all artifacts for verification
+echo "Artifacts found:"
+ls -lh
 
 cd ..
 

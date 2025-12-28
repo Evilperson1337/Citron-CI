@@ -1,0 +1,119 @@
+name: Mirror Forgejo Releases
+
+on:
+  schedule:
+    - cron: "0 */12 * * *" # every 12 hours
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Optional: Specific Forgejo tag to mirror (e.g., "v1.2.3"). Leave empty to use latest release.'
+        required: false
+        type: string
+      release_tag_override:
+        description: 'Optional: Custom GitHub release tag name (e.g., "v1.2.3-custom"). Leave empty to use the Forgejo tag name.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
+      - name: Fetch Forgejo release
+        id: forgejo
+        run: |
+          # Use provided tag or fetch latest
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            echo "Using provided tag: ${{ github.event.inputs.tag_name }}"
+            API_URL="https://git.citron-emu.org/api/v1/repos/Citron/Emulator/releases/tags/${{ github.event.inputs.tag_name }}"
+          else
+            echo "Fetching latest release"
+            API_URL="https://git.citron-emu.org/api/v1/repos/Citron/Emulator/releases/latest"
+          fi
+
+          release_json=$(curl -fsSL "$API_URL")
+
+          echo "$release_json" > forgejo_release.json
+
+          tag=$(jq -r '.tag_name' forgejo_release.json)
+          name=$(jq -r '.name' forgejo_release.json)
+
+          # Use custom release tag if provided, otherwise use the Forgejo tag
+          if [ -n "${{ github.event.inputs.release_tag_override }}" ]; then
+            release_tag="${{ github.event.inputs.release_tag_override }}"
+          else
+            release_tag="$tag"
+          fi
+
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+          echo "name=$name" >> $GITHUB_OUTPUT
+          echo "release_tag=$release_tag" >> $GITHUB_OUTPUT
+
+      - name: Check if release already exists on GitHub
+        id: check
+        run: |
+          if gh release view "${{ steps.forgejo.outputs.release_tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stop if no new releases
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          echo "No new release detected. Exiting."
+
+      - name: Download and rename assets
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          mkdir -p assets
+
+          jq -r '.assets[] | "\(.browser_download_url) \(.name)"' forgejo_release.json \
+          | while read url name; do
+              echo "Downloading $name"
+
+              curl -L "$url" -o "assets/$name"
+          done
+
+      - name: Create draft GitHub release
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          gh release create "${{ steps.forgejo.outputs.release_tag }}" \
+            --title "${{ steps.forgejo.outputs.name }}" \
+            --draft \
+            --notes "Mirrored from Forgejo release."
+
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload assets
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          gh release upload "${{ steps.forgejo.outputs.release_tag }}" assets/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send notification
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d @- \
+            "${{ secrets.NOTIFY_WEBHOOK }}" <<EOF
+          {
+            "content": "🚀 New Citron release mirrored: **${{ steps.forgejo.outputs.release_tag }}** (draft created)"
+          }
+          EOF

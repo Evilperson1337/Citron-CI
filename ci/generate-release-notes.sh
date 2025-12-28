@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Generate release notes from template with variable substitution
 # Usage: generate-release-notes.sh <commit_hash> <full_hash> <branch> <version> <date> <time>
@@ -29,9 +30,22 @@ TEMPLATE_CONTENT=$(cat "$TEMPLATE_PATH")
 REPO_URL="https://github.com/$GITHUB_REPOSITORY"
 RELEASE_URL="$REPO_URL/releases/download/citron-nightly"
 
+# Linux AppImage files
 ASSET_LINUX_AMD64="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-amd64.AppImage"
 ASSET_LINUX_AMD64_V3="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-amd64-v3.AppImage"
 ASSET_LINUX_ARM64="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-arm64.AppImage"
+
+# Linux zsync files (for incremental updates)
+ASSET_LINUX_AMD64_ZSYNC="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-amd64.AppImage.zsync"
+ASSET_LINUX_AMD64_V3_ZSYNC="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-amd64-v3.AppImage.zsync"
+ASSET_LINUX_ARM64_ZSYNC="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-arm64.AppImage.zsync"
+
+# Linux tar.zst archives
+ASSET_LINUX_AMD64_TAR="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-amd64.tar.zst"
+ASSET_LINUX_AMD64_V3_TAR="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-amd64-v3.tar.zst"
+ASSET_LINUX_ARM64_TAR="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-linux-arm64.tar.zst"
+
+# Other platforms
 ASSET_WINDOWS_AMD64="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-windows-amd64.zip"
 ASSET_MACOS_ARM64="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-macos-universal.dmg"
 ASSET_ANDROID_ARM64="$RELEASE_URL/Citron-Nightly_$COMMIT_HASH-android-arm64.apk"
@@ -48,6 +62,18 @@ RELEASE_NOTES="${RELEASE_NOTES//\{time\}/$TIME}"
 RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_amd64\}/$ASSET_LINUX_AMD64}"
 RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_amd64_v3\}/$ASSET_LINUX_AMD64_V3}"
 RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_arm64\}/$ASSET_LINUX_ARM64}"
+
+# Replace zsync placeholders
+RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_amd64_zsync\}/$ASSET_LINUX_AMD64_ZSYNC}"
+RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_amd64_v3_zsync\}/$ASSET_LINUX_AMD64_V3_ZSYNC}"
+RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_arm64_zsync\}/$ASSET_LINUX_ARM64_ZSYNC}"
+
+# Replace tar archive placeholders
+RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_amd64_tar\}/$ASSET_LINUX_AMD64_TAR}"
+RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_amd64_v3_tar\}/$ASSET_LINUX_AMD64_V3_TAR}"
+RELEASE_NOTES="${RELEASE_NOTES//\{asset_linux_arm64_tar\}/$ASSET_LINUX_ARM64_TAR}"
+
+# Other platforms
 RELEASE_NOTES="${RELEASE_NOTES//\{asset_windows_amd64\}/$ASSET_WINDOWS_AMD64}"
 RELEASE_NOTES="${RELEASE_NOTES//\{asset_macos_arm64\}/$ASSET_MACOS_ARM64}"
 RELEASE_NOTES="${RELEASE_NOTES//\{asset_android_arm64\}/$ASSET_ANDROID_ARM64}"
