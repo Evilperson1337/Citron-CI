@@ -192,6 +192,47 @@ jobs:
             echo "No changes detected"
           fi
   # ============================================================
+  # Download Source Repository
+  # ============================================================
+  # This job downloads the source repository once and makes it
+  # available to all build jobs as an artifact, avoiding multiple
+  # redundant clones and reducing rate limit issues
+  # ============================================================
+  download-source:
+    name: Download Source Repository
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      source_artifact_name: source-${{ needs.check-version.outputs.new_hash }}
+    
+    steps:
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v4
+
+      - name: Clone upstream source
+        run: |
+          git clone \
+            --branch "${{ needs.check-version.outputs.branch_name }}" \
+            --recurse-submodules \
+            --depth 1 \
+            https://git.citron-emu.org/Citron/Emulator.git emulator
+          cd emulator
+          git fetch --depth=1 origin "${{ needs.check-version.outputs.new_hash_full }}"
+          git checkout "${{ needs.check-version.outputs.new_hash_full }}"
+
+      - name: Mark safe directory
+        run: git config --global --add safe.directory "$PWD/emulator"
+
+      - name: Upload source as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-${{ needs.check-version.outputs.new_hash }}
+          path: emulator/
+          retention-days: 1
+          if-no-files-found: error
+
+  # ============================================================
   # Build Matrix - All Platforms
   # ============================================================
   # This job runs builds for all target platforms in parallel
@@ -200,7 +241,7 @@ jobs:
   # ============================================================
   build-matrix:
     name: Build Citron (${{ matrix.platform.name }})
-    needs: check-version
+    needs: [check-version, download-source]
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: ${{ matrix.platform.timeout }}
@@ -373,17 +414,17 @@ jobs:
         if: matrix.platform.container != ''
         run: pacman -Syu --noconfirm --needed git
 
-      - name: Clone upstream source
-        shell: bash
+      - name: Download source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.download-source.outputs.source_artifact_name }}
+          path: ./
+      
+      - name: Verify source download
         run: |
-          git clone \
-            --branch "$UPSTREAM_BRANCH" \
-            --recurse-submodules \
-            https://git.citron-emu.org/Citron/Emulator.git emulator
-          cd emulator
-          git checkout "$GIT_SHA_FULL"
-      - name: Mark safe directory
-        run: git config --global --add safe.directory "$PWD/emulator"
+          echo "Verifying source download..."
+          ls -la emulator/
+          cd emulator && git log -1 --oneline
 
       # Cache Android SDK, Gradle, and Maven dependencies
       - name: Cache Android dependencies
@@ -444,7 +485,6 @@ jobs:
         working-directory: ./emulator
         shell: bash
         run: |
-          git fetch --tags
           VERSION=$(git rev-parse --short HEAD)
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
       - name: Execute platform build
@@ -482,9 +522,9 @@ jobs:
   # ============================================================
   create-release:
     name: Create Release
-    needs: [check-version, build-matrix]
+    needs: [check-version, download-source, build-matrix]
     if: |
-      needs.check-version.outputs.should_build == 'true' && 
+      needs.check-version.outputs.should_build == 'true' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build-improvements')
     runs-on: ubuntu-latest
     permissions:
