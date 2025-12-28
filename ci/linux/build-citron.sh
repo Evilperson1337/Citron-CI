@@ -51,12 +51,16 @@ retry_operation() {
 export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
 export CCACHE_COMPILERCHECK=content
 export CCACHE_SLOPPINESS=time_macros
+export CCACHE_MAXSIZE=10G
+export CCACHE_COMPRESS=1
+export CCACHE_COMPRESSLEVEL=6
+mkdir -p "$CCACHE_DIR"
 ccache --show-stats || true
 
 # --- Architecture and Compiler Flag Setup ---
 ARCH="${ARCH:-$(uname -m)}"
 
-if [ "$1" = 'v3' ] && [ "$ARCH" = 'x86_64' ]; then
+if [ "${1:-}" = 'v3' ] && [ "$ARCH" = 'x86_64' ]; then
     ARCH_FLAGS="-march=x86-64-v3 -O3 -USuccess -UNone -fuse-ld=lld"
 elif [ "$ARCH" = 'x86_64' ]; then
     ARCH_FLAGS="-march=x86-64 -mtune=generic -O3 -USuccess -UNone -fuse-ld=lld"

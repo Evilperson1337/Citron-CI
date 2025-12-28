@@ -57,6 +57,10 @@ retry_operation() {
 export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
 export CCACHE_COMPILERCHECK=content
 export CCACHE_SLOPPINESS=time_macros
+export CCACHE_MAXSIZE=10G
+export CCACHE_COMPRESS=1
+export CCACHE_COMPRESSLEVEL=6
+mkdir -p "$CCACHE_DIR"
 ccache --show-stats || true
 
 log_section "Building Citron for macOS"
