@@ -9,7 +9,7 @@
 #   artifact_basename: Base name for the output artifact
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 ARTIFACT_BASENAME="${1:-Citron-Nightly}"
 

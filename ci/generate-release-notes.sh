@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Generate release notes from template with variable substitution
 # Usage: generate-release-notes.sh <commit_hash> <full_hash> <branch> <version> <date> <time>

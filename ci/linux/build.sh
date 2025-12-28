@@ -10,7 +10,7 @@
 #   artifact_basename: Base name for the output artifact
 # ==============================================================================
 
-set -e
+set -euo pipefail
 
 # Parse arguments
 ARCH="${1:-x86_64}"
