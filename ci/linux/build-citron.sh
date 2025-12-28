@@ -70,7 +70,7 @@ fi
 
 # --- Source Code Checkout and Versioning ---
 log_section "Using Downloaded Source Code"
-cd ./emulator
+cd emulator
 log_success "Source directory found"
 
 if [ "$DEVEL" = 'true' ]; then
