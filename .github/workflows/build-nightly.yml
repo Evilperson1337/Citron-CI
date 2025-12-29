@@ -613,14 +613,27 @@ jobs:
           echo "$RELEASE_BODY" | head -c 1000
           echo "..."
 
-      - name: Create or Update GitHub Release
+      - name: Delete old release if it exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ needs.check-version.outputs.tag_name }}"
+          
+          # Check if release exists and delete it to replace assets
+          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "Deleting old release to replace assets..."
+            gh release delete "$TAG_NAME" --repo "${{ github.repository }}" --yes
+          else
+            echo "No existing release found, creating new one..."
+          fi
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.check-version.outputs.tag_name }}
           name: Citron Nightly (${{ needs.check-version.outputs.new_hash }})
           prerelease: true
           draft: false
-          overwrite: true
           make_latest: true
           files: ./release-files/*
           body_path: release-notes.md
