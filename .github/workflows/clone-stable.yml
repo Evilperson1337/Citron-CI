@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Optional: Specific Forgejo tag to mirror (e.g., "v1.2.3"). Leave empty to use latest release.'
+        description: 'Optional: Specific Forgejo tag to mirror (e.g., "1.2.3" or "v1.2.3"). Leave empty to use latest release.'
         required: false
         type: string
       release_tag_override:
@@ -49,18 +49,18 @@ jobs:
           
           # Validate tag_name if provided
           if [ -n "${{ github.event.inputs.tag_name }}" ]; then
-            if [[ ! "${{ github.event.inputs.tag_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-              echo "❌ Error: Invalid tag format. Expected format: v1.2.3 or v1.2.3-rc1"
+            if [[ ! "${{ github.event.inputs.tag_name }}" =~ ^(v)?[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+              echo "❌ Error: Invalid tag format. Expected format: v1.2.3 or 1.2.3 or v1.2.3-rc1"
               echo "Received: ${{ github.event.inputs.tag_name }}"
               exit 1
             fi
             echo "✓ Valid tag format: ${{ github.event.inputs.tag_name }}"
           fi
           
-          # Validate release_tag_override if provided
+          # Validate release_tag_override if provided (must have v prefix)
           if [ -n "${{ github.event.inputs.release_tag_override }}" ]; then
             if [[ ! "${{ github.event.inputs.release_tag_override }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
-              echo "❌ Error: Invalid release tag format. Expected format: v1.2.3-custom"
+              echo "❌ Error: Invalid release tag format. Expected format: v1.2.3-custom (must start with 'v')"
               echo "Received: ${{ github.event.inputs.release_tag_override }}"
               exit 1
             fi
@@ -148,11 +148,23 @@ jobs:
             exit 1
           fi
 
-          # Use custom release tag if provided, otherwise use the Forgejo tag
+          # Use custom release tag if provided, otherwise normalize the Forgejo tag
           if [ -n "${{ github.event.inputs.release_tag_override }}" ]; then
             release_tag="${{ github.event.inputs.release_tag_override }}"
           else
-            release_tag="$tag"
+            # Normalize tag to always have 'v' prefix (e.g., "0.12.25" -> "v0.12.25")
+            if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+              # Tag already has v prefix, use as-is
+              release_tag="$tag"
+            elif [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+              # Tag is missing v prefix, add it
+              release_tag="v$tag"
+              echo "Normalized tag: $tag -> $release_tag"
+            else
+              # Tag has unexpected format, use as-is but warn
+              release_tag="$tag"
+              echo "⚠️  Warning: Tag has unexpected format: $tag"
+            fi
           fi
 
           echo "tag=$tag" >> $GITHUB_OUTPUT
