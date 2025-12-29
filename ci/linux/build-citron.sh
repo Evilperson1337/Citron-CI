@@ -70,7 +70,11 @@ fi
 
 # --- Source Code Checkout and Versioning ---
 log_section "Using Downloaded Source Code"
-cd emulator
+
+# Only cd to emulator if we're not already in it (when script is copied into emulator dir)
+if [ ! -f "CMakeLists.txt" ] || [ ! -d "src" ]; then
+    cd emulator
+fi
 log_success "Source directory found"
 
 if [ "$DEVEL" = 'true' ]; then
