@@ -191,6 +191,7 @@ jobs:
             echo "should_build=false" >> $GITHUB_OUTPUT
             echo "No changes detected"
           fi
+
   # ============================================================
   # Download Source Repository
   # ============================================================
@@ -220,12 +221,24 @@ jobs:
           cd emulator
           git fetch --depth=1 origin "${{ needs.check-version.outputs.new_hash_full }}"
           git checkout "${{ needs.check-version.outputs.new_hash_full }}"
+          
+          # Ensure all submodules are properly initialized and updated
+          git submodule update --init --recursive --depth 1
 
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
 
-      - name: Create source tarball
-        run: tar czf source.tar.gz emulator/
+      - name: Verify submodules are properly initialized
+        run: |
+          echo "Checking submodules in emulator/externals/dynarmic/externals/mcl..."
+          ls -la emulator/externals/dynarmic/externals/mcl/ || echo "mcl directory not found"
+          if [ -d emulator/externals/dynarmic/externals/mcl ]; then
+            echo "mcl files:"
+            ls emulator/externals/dynarmic/externals/mcl/*.hpp 2>/dev/null | head -5 || echo "No hpp files found"
+          fi
+
+      - name: Create source tarball with proper permissions
+        run: tar --numeric-owner --owner=0 --group=0 -czf source.tar.gz emulator/
 
       - name: Upload source as artifact
         uses: actions/upload-artifact@v4
@@ -429,11 +442,31 @@ jobs:
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
 
-      - name: Verify source download
+      - name: Verify source download and submodules
         run: |
           echo "Verifying source download..."
           ls -la emulator/
           cd emulator && git log -1 --oneline
+          
+          echo "Checking if mcl library files exist..."
+          if [ -d externals/dynarmic/externals/mcl ]; then
+            echo "mcl directory found"
+            ls externals/dynarmic/externals/mcl/*.hpp 2>/dev/null | head -5 || echo "No hpp files in mcl"
+            
+            # Check for the specific files mentioned in the error
+            echo "Checking for mcl header files..."
+            for file in "mp/typelist/lift_sequence.hpp" "mp/metafunction/map.hpp"; do
+              if [ -f "externals/dynarmic/externals/mcl/include/mcl/$file" ]; then
+                echo "✓ Found: externals/dynarmic/externals/mcl/include/mcl/$file"
+              else
+                echo "✗ Missing: externals/dynarmic/externals/mcl/include/mcl/$file"
+              fi
+            done
+          else
+            echo "WARNING: mcl directory not found!"
+            echo "Contents of externals/dynarmic/externals/:"
+            ls -la externals/dynarmic/externals/ 2>/dev/null || echo "dynarmic externals not found"
+          fi
         shell: bash
 
       # Cache Android SDK, Gradle, and Maven dependencies
