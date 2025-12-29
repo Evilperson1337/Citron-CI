@@ -16,6 +16,12 @@ if [ -d "$ANDROID_HOME" ] && [ -d "$ANDROID_NDK_HOME" ]; then
     echo "Using cached Android SDK and NDK..."
     echo "ANDROID_HOME: $ANDROID_HOME"
     echo "ANDROID_NDK_HOME: $ANDROID_NDK_HOME"
+    
+    # Still need to install system dependencies even if SDK is cached
+    echo "Installing system dependencies..."
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq wget unzip curl git cmake build-essential pkg-config zip glslang-tools nasm perl autoconf automake libtool yasm ccache
+    
     echo "========================================"
     echo "Dependencies already available from cache!"
     echo "========================================"
