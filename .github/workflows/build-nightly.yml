@@ -630,13 +630,13 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.check-version.outputs.tag_name }}
-          name: Citron Nightly (${{ needs.check-version.outputs.new_hash }})
-          prerelease: true
-          draft: false
-          make_latest: true
-          files: ./release-files/*
-          body_path: release-notes.md
+           tag_name: ${{ needs.check-version.outputs.tag_name }}
+           name: Citron Nightly (${{ needs.check-version.outputs.new_hash }})
+           prerelease: true
+           draft: false
+           make_latest: true
+           files: ./release-files/*
+           body_path: release-notes.md
 
       - name: Update platform-specific version files
         if: success()
