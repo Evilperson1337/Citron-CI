@@ -23,8 +23,8 @@
 # - Android: Citron-Nightly_b1192de0c-android-arm64.apk
 #
 # RELEASE MANAGEMENT:
-# - Tag: Always uses 'citron-nightly' (no new tags per build)
-# - Behavior: Overwrites existing release with new artifacts
+# - Tag: Always uses 'citron-nightly' (tag deleted and recreated each build)
+# - Behavior: Deletes old tag/release and creates new ones with fresh timestamp
 # - Type: Always marked as prerelease (nightly builds)
 # - Latest: Marked as latest release for easy access
 # - Release Notes: Generated from ci/NIGHTLY_RELEASE_TEMPLATE.md with automatic
@@ -613,7 +613,7 @@ jobs:
           echo "$RELEASE_BODY" | head -c 1000
           echo "..."
 
-      - name: Delete old release if it exists
+      - name: Delete old release and tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -625,6 +625,15 @@ jobs:
             gh release delete "$TAG_NAME" --repo "${{ github.repository }}" --yes
           else
             echo "No existing release found, creating new one..."
+          fi
+          
+          # Delete the git tag if it exists (force delete to ensure clean state)
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Deleting old tag: $TAG_NAME"
+            git tag -d "$TAG_NAME"
+            git push origin ":refs/tags/$TAG_NAME" || echo "Tag doesn't exist on remote or already deleted"
+          else
+            echo "No existing tag found locally"
           fi
 
       - name: Create GitHub Release
