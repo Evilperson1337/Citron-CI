@@ -16,7 +16,7 @@ echo "========================================"
 
 # Build APK
 echo "Building APK..."
-cd citron/src/android
+cd emulator/src/android
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 chmod +x gradlew
 ./gradlew assembleMainlineRelease -Pcmake.args="-DENABLE_WEB_SERVICE=OFF -DENABLE_OPENSSL=OFF"

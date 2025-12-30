@@ -26,12 +26,12 @@ echo "========================================"
 # Install system dependencies
 pacman -Syu --noconfirm --needed git
 
-# Copy build scripts to emulator directory
-cp ci/linux/get-dependencies.sh ci/linux/build-citron.sh ci/linux/package-citron.sh emulator/
-chmod +x emulator/*.sh
-
 # Navigate to emulator directory
 cd emulator
+
+# Copy build scripts to emulator directory (now using absolute paths from repo root)
+cp ../ci/linux/get-dependencies.sh ../ci/linux/build-citron.sh ../ci/linux/package-citron.sh .
+chmod +x *.sh
 
 # Install dependencies
 ./get-dependencies.sh

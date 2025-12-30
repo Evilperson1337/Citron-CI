@@ -1,4 +1,9 @@
-name: Mirror Forgejo Releases
+name: Clone Official Releases
+
+# Prevent concurrent builds from interfering with each other
+concurrency:
+  group: mirror-forgejo-releases
+  cancel-in-progress: false
 
 on:
   schedule:
@@ -6,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Optional: Specific Forgejo tag to mirror (e.g., "v1.2.3"). Leave empty to use latest release.'
+        description: 'Optional: Specific Forgejo tag to mirror (e.g., "1.2.3" or "v1.2.3"). Leave empty to use latest release.'
         required: false
         type: string
       release_tag_override:
@@ -25,14 +30,83 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # Cache apt packages for faster dependency installation
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt
+          key: apt-cache-${{ runner.os }}
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl
 
+      # Validate input parameters
+      - name: Validate inputs
+        run: |
+          echo "Validating input parameters..."
+          
+          # Validate tag_name if provided
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            if [[ ! "${{ github.event.inputs.tag_name }}" =~ ^(v)?[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+              echo "❌ Error: Invalid tag format. Expected format: v1.2.3 or 1.2.3 or v1.2.3-rc1"
+              echo "Received: ${{ github.event.inputs.tag_name }}"
+              exit 1
+            fi
+            echo "✓ Valid tag format: ${{ github.event.inputs.tag_name }}"
+          fi
+          
+          # Validate release_tag_override if provided (must have v prefix)
+          if [ -n "${{ github.event.inputs.release_tag_override }}" ]; then
+            if [[ ! "${{ github.event.inputs.release_tag_override }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+              echo "❌ Error: Invalid release tag format. Expected format: v1.2.3-custom (must start with 'v')"
+              echo "Received: ${{ github.event.inputs.release_tag_override }}"
+              exit 1
+            fi
+            echo "✓ Valid release tag format: ${{ github.event.inputs.release_tag_override }}"
+          fi
+          
+          echo "✓ All input validations passed"
+
+      # Helper function for retry logic
+      - name: Setup retry function
+        id: retry_setup
+        run: |
+          cat >> retry.sh << 'EOF'
+          # Retry function for network operations
+          retry_command() {
+            local cmd="$1"
+            local max_attempts=3
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "Attempt $attempt of $max_attempts..."
+              if eval "$cmd"; then
+                echo "✓ Command succeeded on attempt $attempt"
+                return 0
+              else
+                echo "✗ Command failed on attempt $attempt"
+                if [ $attempt -lt $max_attempts ]; then
+                  echo "Retrying in 5 seconds..."
+                  sleep 5
+                fi
+                attempt=$((attempt + 1))
+              fi
+            done
+            
+            echo "❌ Command failed after $max_attempts attempts"
+            return 1
+          }
+          EOF
+          chmod +x retry.sh
+
       - name: Fetch Forgejo release
         id: forgejo
         run: |
+          # Source the retry function
+          source ./retry.sh
+          
           # Use provided tag or fetch latest
           if [ -n "${{ github.event.inputs.tag_name }}" ]; then
             echo "Using provided tag: ${{ github.event.inputs.tag_name }}"
@@ -41,24 +115,66 @@ jobs:
             echo "Fetching latest release"
             API_URL="https://git.citron-emu.org/api/v1/repos/Citron/Emulator/releases/latest"
           fi
+          
+          echo "API URL: $API_URL"
 
-          release_json=$(curl -fsSL "$API_URL")
+          # Fetch release with retry and error handling
+          release_json=$(retry_command "curl -fsSL '$API_URL'" || echo "ERROR")
+          if [ "$release_json" = "ERROR" ] || [ -z "$release_json" ]; then
+            echo "❌ Failed to fetch release from Forgejo API after 3 attempts"
+            echo "API URL: $API_URL"
+            exit 1
+          fi
 
           echo "$release_json" > forgejo_release.json
+          
+          # Validate JSON response
+          if ! jq empty forgejo_release.json 2>/dev/null; then
+            echo "❌ Invalid JSON response from Forgejo API"
+            echo "Response: $(cat forgejo_release.json | head -c 200)"
+            exit 1
+          fi
 
           tag=$(jq -r '.tag_name' forgejo_release.json)
           name=$(jq -r '.name' forgejo_release.json)
+          
+          # Validate required fields
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "❌ Failed to extract tag_name from response"
+            exit 1
+          fi
+          if [ -z "$name" ] || [ "$name" = "null" ]; then
+            echo "❌ Failed to extract name from response"
+            exit 1
+          fi
 
-          # Use custom release tag if provided, otherwise use the Forgejo tag
+          # Use custom release tag if provided, otherwise normalize the Forgejo tag
           if [ -n "${{ github.event.inputs.release_tag_override }}" ]; then
             release_tag="${{ github.event.inputs.release_tag_override }}"
           else
-            release_tag="$tag"
+            # Normalize tag to always have 'v' prefix (e.g., "0.12.25" -> "v0.12.25")
+            if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+              # Tag already has v prefix, use as-is
+              release_tag="$tag"
+            elif [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+              # Tag is missing v prefix, add it
+              release_tag="v$tag"
+              echo "Normalized tag: $tag -> $release_tag"
+            else
+              # Tag has unexpected format, use as-is but warn
+              release_tag="$tag"
+              echo "⚠️  Warning: Tag has unexpected format: $tag"
+            fi
           fi
 
           echo "tag=$tag" >> $GITHUB_OUTPUT
           echo "name=$name" >> $GITHUB_OUTPUT
           echo "release_tag=$release_tag" >> $GITHUB_OUTPUT
+          
+          echo "✓ Successfully fetched release information"
+          echo "  Tag: $tag"
+          echo "  Name: $name"
+          echo "  Release Tag: $release_tag"
 
       - name: Check if release already exists on GitHub
         id: check
@@ -80,13 +196,59 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         run: |
           mkdir -p assets
-
+          source ./retry.sh
+          
+          echo "Downloading assets from Forgejo release..."
+          asset_count=$(jq -r '.assets | length' forgejo_release.json)
+          echo "Found $asset_count assets to download"
+          
           jq -r '.assets[] | "\(.browser_download_url) \(.name)"' forgejo_release.json \
           | while read url name; do
-              echo "Downloading $name"
-
-              curl -L "$url" -o "assets/$name"
+              echo "📥 Downloading: $name"
+              echo "   URL: $url"
+              
+              # Download with retry logic
+              if ! retry_command "curl -L '$url' -o 'assets/$name'"; then
+                echo "❌ Failed to download $name after 3 attempts"
+                exit 1
+              fi
+              
+              echo "✓ Downloaded: $name"
           done
+          
+          echo "✓ All assets downloaded successfully"
+
+      - name: Verify downloaded assets
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          echo "Verifying downloaded assets..."
+          
+          # Check if assets directory exists and has files
+          if [ ! -d "assets" ]; then
+            echo "❌ Assets directory not found"
+            exit 1
+          fi
+          
+          asset_count=$(ls -1 assets/ | wc -l)
+          if [ "$asset_count" -eq 0 ]; then
+            echo "❌ No assets found in assets directory"
+            exit 1
+          fi
+          
+          echo "Found $asset_count assets:"
+          
+          # Verify each asset
+          for file in assets/*; do
+            if [ ! -s "$file" ]; then
+              echo "❌ Error: $file is empty or doesn't exist"
+              exit 1
+            fi
+            
+            file_size=$(stat -c%s "$file")
+            echo "✓ $(basename "$file"): $file_size bytes"
+          done
+          
+          echo "✓ All assets verified successfully"
 
       - name: Create draft GitHub release
         if: steps.check.outputs.exists == 'false'
@@ -94,10 +256,49 @@ jobs:
           gh release create "${{ steps.forgejo.outputs.release_tag }}" \
             --title "${{ steps.forgejo.outputs.name }}" \
             --draft \
-            --notes "Mirrored from Forgejo release."
+            --notes "Mirrored from Forgejo release. [skip ci]"
 
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generate workflow summary
+      - name: Workflow Summary
+        if: always()
+        run: |
+          echo "## Mirror Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Release Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Forgejo Tag**: ${{ steps.forgejo.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Name**: ${{ steps.forgejo.outputs.name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Release Tag**: ${{ steps.forgejo.outputs.release_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release Exists**: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check.outputs.exists }}" = "false" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Assets Mirrored" >> $GITHUB_STEP_SUMMARY
+            if [ -d "assets" ]; then
+              asset_count=$(ls -1 assets/ 2>/dev/null | wc -l)
+              echo "- **Total Assets**: $asset_count" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "#### Asset Details:" >> $GITHUB_STEP_SUMMARY
+              for file in assets/*; do
+                if [ -f "$file" ]; then
+                  file_size=$(stat -c%s "$file" 2>/dev/null || echo "unknown")
+                  echo "- $(basename "$file") ($file_size bytes)" >> $GITHUB_STEP_SUMMARY
+                fi
+              done
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Workflow Status" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ **Status**: Success" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ job.status }}" = "failure" ]; then
+            echo "❌ **Status**: Failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload assets
         if: steps.check.outputs.exists == 'false'
@@ -117,3 +318,13 @@ jobs:
             "content": "🚀 New Citron release mirrored: **${{ steps.forgejo.outputs.release_tag }}** (draft created)"
           }
           EOF
+
+      # Send failure notification if workflow fails
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Sending failure notification..."
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"❌ Citron mirror workflow failed for tag: **${{ steps.forgejo.outputs.tag }}**\\n\\n**Reason**: Workflow execution failed\\n\\n**GitHub Run**: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "${{ secrets.NOTIFY_WEBHOOK }}" || echo "Failed to send failure notification (webhook may not be configured)"

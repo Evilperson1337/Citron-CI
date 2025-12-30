@@ -21,11 +21,16 @@ Write-Host "========================================"
 Write-Host "Building Citron for Windows ($Arch)"
 Write-Host "Artifact basename: $ArtifactBasename"
 Write-Host "========================================"
-
-# Clone source
-Write-Host "Cloning Citron source..."
-git clone --recursive "https://git.citron-emu.org/Citron/Emulator.git" emulator
-
+ 
+# Use already downloaded source
+Write-Host "Using downloaded source from emulator/..."
+if (-not (Test-Path "emulator")) {
+    Write-Error "emulator/ directory not found!"
+    Write-Error "Expected to find source code in $(Get-Location)\emulator"
+    Get-ChildItem
+    exit 1
+}
+ 
 # Navigate to emulator directory
 cd emulator
 

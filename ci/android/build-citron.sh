@@ -60,15 +60,21 @@ export CCACHE_SLOPPINESS=time_macros
 ccache --show-stats || true
 
 log_section "Building Citron for Android"
-
-# Clone source
-log_info "Cloning source repository"
-retry_operation git clone --recursive "https://git.citron-emu.org/Citron/Emulator.git" citron
-log_success "Repository cloned successfully"
-
-# Configure CMake for Android
+ 
+# Use already downloaded source
+log_info "Using downloaded source from emulator/"
+if [ ! -d "emulator" ]; then
+    log_error "emulator/ directory not found!"
+    log_error "Expected to find source code in $(pwd)/emulator/"
+    ls -la
+    exit 1
+fi
+log_success "Source directory found"
+ 
+# Store original directory and configure CMake for Android
 log_info "Configuring CMake for Android"
-cd citron
+BUILD_DIR="$(pwd)/emulator"
+cd "$BUILD_DIR"
 cmake -B build-android -S . \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DCMAKE_BUILD_TYPE=Release \

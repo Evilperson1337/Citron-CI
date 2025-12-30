@@ -23,8 +23,8 @@
 # - Android: Citron-Nightly_b1192de0c-android-arm64.apk
 #
 # RELEASE MANAGEMENT:
-# - Tag: Always uses 'citron-nightly' (no new tags per build)
-# - Behavior: Overwrites existing release with new artifacts
+# - Tag: Always uses 'citron-nightly' (tag deleted and recreated each build)
+# - Behavior: Deletes old tag/release and creates new ones with fresh timestamp
 # - Type: Always marked as prerelease (nightly builds)
 # - Latest: Marked as latest release for easy access
 # - Release Notes: Generated from ci/NIGHTLY_RELEASE_TEMPLATE.md with automatic
@@ -191,6 +191,63 @@ jobs:
             echo "should_build=false" >> $GITHUB_OUTPUT
             echo "No changes detected"
           fi
+
+  # ============================================================
+  # Download Source Repository
+  # ============================================================
+  # This job downloads the source repository once and makes it
+  # available to all build jobs as an artifact, avoiding multiple
+  # redundant clones and reducing rate limit issues
+  # ============================================================
+  download-source:
+    name: Download Source Repository
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      source_artifact_name: source-${{ needs.check-version.outputs.new_hash }}
+    
+    steps:
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v4
+
+      - name: Clone upstream source
+        run: |
+          git clone \
+            --branch "${{ needs.check-version.outputs.branch_name }}" \
+            --recurse-submodules \
+            --depth 1 \
+            https://git.citron-emu.org/Citron/Emulator.git emulator
+          cd emulator
+          git fetch --depth=1 origin "${{ needs.check-version.outputs.new_hash_full }}"
+          git checkout "${{ needs.check-version.outputs.new_hash_full }}"
+          
+          # Ensure all submodules are properly initialized and updated
+          git submodule update --init --recursive --depth 1
+
+      - name: Mark safe directory
+        run: git config --global --add safe.directory "$PWD/emulator"
+
+      - name: Verify submodules are properly initialized
+        run: |
+          echo "Checking submodules in emulator/externals/dynarmic/externals/mcl..."
+          ls -la emulator/externals/dynarmic/externals/mcl/ || echo "mcl directory not found"
+          if [ -d emulator/externals/dynarmic/externals/mcl ]; then
+            echo "mcl files:"
+            ls emulator/externals/dynarmic/externals/mcl/*.hpp 2>/dev/null | head -5 || echo "No hpp files found"
+          fi
+
+      - name: Create source tarball with proper permissions
+        run: tar --numeric-owner --owner=0 --group=0 -czf source.tar.gz emulator/
+
+      - name: Upload source as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-${{ needs.check-version.outputs.new_hash }}
+          path: source.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
   # ============================================================
   # Build Matrix - All Platforms
   # ============================================================
@@ -200,7 +257,7 @@ jobs:
   # ============================================================
   build-matrix:
     name: Build Citron (${{ matrix.platform.name }})
-    needs: check-version
+    needs: [check-version, download-source]
     if: needs.check-version.outputs.should_build == 'true'
     runs-on: ${{ matrix.platform.runs_on }}
     timeout-minutes: ${{ matrix.platform.timeout }}
@@ -342,7 +399,7 @@ jobs:
               build_script: |
                 chmod +x ci/macos/build.sh
                 ci/macos/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "citron/dist/*.dmg"
+              artifact_path: "emulator/dist/*.dmg"
               artifact_suffix: "-macos-universal"
 
           # Android
@@ -355,7 +412,7 @@ jobs:
               build_script: |
                 chmod +x ci/android/build.sh
                 ci/android/build.sh "${{ needs.check-version.outputs.artifact_basename }}"
-              artifact_path: "citron/dist/*.apk"
+              artifact_path: "emulator/dist/*.apk"
               artifact_suffix: "-android-arm64"
 
     container: ${{ matrix.platform.container || null }}
@@ -373,17 +430,44 @@ jobs:
         if: matrix.platform.container != ''
         run: pacman -Syu --noconfirm --needed git
 
-      - name: Clone upstream source
-        shell: bash
-        run: |
-          git clone \
-            --branch "$UPSTREAM_BRANCH" \
-            --recurse-submodules \
-            https://git.citron-emu.org/Citron/Emulator.git emulator
-          cd emulator
-          git checkout "$GIT_SHA_FULL"
+      - name: Download source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.download-source.outputs.source_artifact_name }}
+          path: ./
+      
+      - name: Extract source tarball
+        run: tar xzf source.tar.gz
+      
       - name: Mark safe directory
         run: git config --global --add safe.directory "$PWD/emulator"
+
+      - name: Verify source download and submodules
+        run: |
+          echo "Verifying source download..."
+          ls -la emulator/
+          cd emulator && git log -1 --oneline
+          
+          echo "Checking if mcl library files exist..."
+          if [ -d externals/dynarmic/externals/mcl ]; then
+            echo "mcl directory found"
+            ls externals/dynarmic/externals/mcl/*.hpp 2>/dev/null | head -5 || echo "No hpp files in mcl"
+            
+            # Check for the specific files mentioned in the error
+            echo "Checking for mcl header files..."
+            for file in "mp/typelist/lift_sequence.hpp" "mp/metafunction/map.hpp"; do
+              if [ -f "externals/dynarmic/externals/mcl/include/mcl/$file" ]; then
+                echo "✓ Found: externals/dynarmic/externals/mcl/include/mcl/$file"
+              else
+                echo "✗ Missing: externals/dynarmic/externals/mcl/include/mcl/$file"
+              fi
+            done
+          else
+            echo "WARNING: mcl directory not found!"
+            echo "Contents of externals/dynarmic/externals/:"
+            ls -la externals/dynarmic/externals/ 2>/dev/null || echo "dynarmic externals not found"
+          fi
+        shell: bash
 
       # Cache Android SDK, Gradle, and Maven dependencies
       - name: Cache Android dependencies
@@ -444,7 +528,6 @@ jobs:
         working-directory: ./emulator
         shell: bash
         run: |
-          git fetch --tags
           VERSION=$(git rev-parse --short HEAD)
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
       - name: Execute platform build
@@ -465,15 +548,9 @@ jobs:
           name: ${{ needs.check-version.outputs.artifact_basename }}${{ matrix.platform.artifact_suffix }}-logs
           path: |
             emulator/build/**/*.log
-            citron/build/**/*.log
             emulator/**/CMake*.txt
-            citron/**/CMake*.txt
             emulator/**/CMake*.log
-            citron/**/CMake*.log
             emulator/**/*.log
-            citron/**/*.log
-            citron/src/android/**/*.log
-            citron/src/android/**/build/**/*.log
           retention-days: 7
           if-no-files-found: ignore
 
@@ -482,9 +559,9 @@ jobs:
   # ============================================================
   create-release:
     name: Create Release
-    needs: [check-version, build-matrix]
+    needs: [check-version, download-source, build-matrix]
     if: |
-      needs.check-version.outputs.should_build == 'true' && 
+      needs.check-version.outputs.should_build == 'true' &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/build-improvements')
     runs-on: ubuntu-latest
     permissions:
@@ -536,17 +613,39 @@ jobs:
           echo "$RELEASE_BODY" | head -c 1000
           echo "..."
 
-      - name: Create or Update GitHub Release
+      - name: Delete old release and tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="${{ needs.check-version.outputs.tag_name }}"
+          
+          # Check if release exists and delete it to replace assets
+          if gh release view "$TAG_NAME" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "Deleting old release to replace assets..."
+            gh release delete "$TAG_NAME" --repo "${{ github.repository }}" --yes
+          else
+            echo "No existing release found, creating new one..."
+          fi
+          
+          # Delete the git tag if it exists (force delete to ensure clean state)
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Deleting old tag: $TAG_NAME"
+            git tag -d "$TAG_NAME"
+            git push origin ":refs/tags/$TAG_NAME" || echo "Tag doesn't exist on remote or already deleted"
+          else
+            echo "No existing tag found locally"
+          fi
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.check-version.outputs.tag_name }}
-          name: Citron Nightly (${{ needs.check-version.outputs.new_hash }})
-          prerelease: true
-          draft: false
-          overwrite: true
-          make_latest: true
-          files: ./release-files/*
-          body_path: release-notes.md
+           tag_name: ${{ needs.check-version.outputs.tag_name }}
+           name: Citron Nightly (${{ needs.check-version.outputs.new_hash }})
+           prerelease: true
+           draft: false
+           make_latest: true
+           files: ./release-files/*
+           body_path: release-notes.md
 
       - name: Update platform-specific version files
         if: success()

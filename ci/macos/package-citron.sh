@@ -16,22 +16,25 @@ echo "========================================"
 
 # Package macOS Build
 echo "Packaging macOS build..."
-cd citron
-mkdir -p dist
+mkdir -p emulator/dist
 
 # Find the .app bundle
-APP_BUNDLE_PATH=$(find build -name "citron.app" | head -n 1)
+APP_BUNDLE_PATH=$(find emulator/build -name "citron.app" | head -n 1)
 if [ -z "$APP_BUNDLE_PATH" ]; then
   echo "::error::Could not find citron.app bundle after build!"
+  echo "Searching in: $(pwd)"
+  find . -name "*.app" -type d 2>/dev/null || echo "No .app bundles found"
   exit 1
 fi
 echo "Found .app bundle at: $APP_BUNDLE_PATH"
 
 # Run macdeployqt
-MACDEPLOYQT_PATH="build/externals/qt/6.7.3/macos/bin/macdeployqt"
-QT_LIB_PATH="build/externals/qt/6.7.3/macos/lib"
+MACDEPLOYQT_PATH="emulator/build/externals/qt/6.7.3/macos/bin/macdeployqt"
+QT_LIB_PATH="emulator/build/externals/qt/6.7.3/macos/lib"
 if [ ! -f "$MACDEPLOYQT_PATH" ]; then
   echo "::error::Could not find macdeployqt!"
+  echo "Looking for: $MACDEPLOYQT_PATH"
+  find . -name "macdeployqt" 2>/dev/null || echo "macdeployqt not found"
   exit 1
 fi
 
@@ -159,9 +162,9 @@ codesign --force --deep -s- "$APP_BUNDLE_PATH"
 echo "Creating final DMG..."
 DMG_FILENAME="${ARTIFACT_BASENAME}-macos-universal.dmg"
 hdiutil create -fs HFS+ -srcfolder "$APP_BUNDLE_PATH" -volname "Citron Nightly" "./$DMG_FILENAME"
-mv "$DMG_FILENAME" ./dist/
+mv "$DMG_FILENAME" ./emulator/dist/
 
 echo "========================================"
 echo "Packaging completed successfully!"
-echo "Artifact: dist/$DMG_FILENAME"
+echo "Artifact: emulator/dist/$DMG_FILENAME"
 echo "========================================"
