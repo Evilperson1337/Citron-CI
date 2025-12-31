@@ -310,21 +310,29 @@ jobs:
       - name: Send notification
         if: steps.check.outputs.exists == 'false'
         run: |
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d @- \
-            "${{ secrets.NOTIFY_WEBHOOK }}" <<EOF
+          if [ -n "${{ secrets.NOTIFY_WEBHOOK }}" ]; then
+            curl -X POST \
+              -H "Content-Type: application/json" \
+              -d @- \
+              "${{ secrets.NOTIFY_WEBHOOK }}" <<EOF || echo "⚠️  Webhook notification failed (webhook may not be configured)"
           {
             "content": "🚀 New Citron release mirrored: **${{ steps.forgejo.outputs.release_tag }}** (draft created)"
           }
           EOF
+          else
+            echo "⚠️  Webhook not configured, skipping notification"
+          fi
 
       # Send failure notification if workflow fails
       - name: Notify on failure
         if: failure()
         run: |
           echo "Sending failure notification..."
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d "{\"content\":\"❌ Citron mirror workflow failed for tag: **${{ steps.forgejo.outputs.tag }}**\\n\\n**Reason**: Workflow execution failed\\n\\n**GitHub Run**: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            "${{ secrets.NOTIFY_WEBHOOK }}" || echo "Failed to send failure notification (webhook may not be configured)"
+          if [ -n "${{ secrets.NOTIFY_WEBHOOK }}" ]; then
+            curl -X POST \
+              -H "Content-Type: application/json" \
+              -d "{\"content\":\"❌ Citron mirror workflow failed for tag: **${{ steps.forgejo.outputs.tag }}**\\n\\n**Reason**: Workflow execution failed\\n\\n**GitHub Run**: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+              "${{ secrets.NOTIFY_WEBHOOK }}" || echo "⚠️  Failed to send failure notification (webhook may not be configured)"
+          else
+            echo "⚠️  Webhook not configured, skipping failure notification"
+          fi
