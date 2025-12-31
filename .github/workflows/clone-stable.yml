@@ -81,21 +81,21 @@ jobs:
             local attempt=1
             
             while [ $attempt -le $max_attempts ]; do
-              echo "Attempt $attempt of $max_attempts..."
+              echo "Attempt $attempt of $max_attempts..." >&2
               if eval "$cmd"; then
-                echo "✓ Command succeeded on attempt $attempt"
+                echo "✓ Command succeeded on attempt $attempt" >&2
                 return 0
               else
-                echo "✗ Command failed on attempt $attempt"
+                echo "✗ Command failed on attempt $attempt" >&2
                 if [ $attempt -lt $max_attempts ]; then
-                  echo "Retrying in 5 seconds..."
+                  echo "Retrying in 5 seconds..." >&2
                   sleep 5
                 fi
                 attempt=$((attempt + 1))
               fi
             done
             
-            echo "❌ Command failed after $max_attempts attempts"
+            echo "❌ Command failed after $max_attempts attempts" >&2
             return 1
           }
           EOF
