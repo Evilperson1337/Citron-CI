@@ -179,21 +179,47 @@ jobs:
       - name: Check if release already exists on GitHub
         id: check
         run: |
+          # Check if GitHub release exists
           if gh release view "${{ steps.forgejo.outputs.release_tag }}" >/dev/null 2>&1; then
+            echo "Release exists on GitHub"
             echo "exists=true" >> $GITHUB_OUTPUT
+            
+            # Get GitHub release assets
+            gh release view "${{ steps.forgejo.outputs.release_tag }}" --json assets --jq '.assets[].name' > github_assets.txt 2>/dev/null || echo "" > github_assets.txt
+            
+            # Get Forgejo release assets from the JSON we already fetched
+            jq -r '.assets[].name' forgejo_release.json > forgejo_assets.txt
+            
+            # Sort and compare
+            sort github_assets.txt > github_assets_sorted.txt
+            sort forgejo_assets.txt > forgejo_assets_sorted.txt
+            
+            if diff -q github_assets_sorted.txt forgejo_assets_sorted.txt >/dev/null 2>&1; then
+              echo "All assets match - no update needed"
+              echo "needs_update=false" >> $GITHUB_OUTPUT
+            else
+              echo "Assets differ - update needed"
+              echo "needs_update=true" >> $GITHUB_OUTPUT
+              echo "GitHub assets:"
+              cat github_assets.txt || echo "(none)"
+              echo "Forgejo assets:"
+              cat forgejo_assets.txt
+            fi
           else
+            echo "Release does not exist on GitHub"
             echo "exists=false" >> $GITHUB_OUTPUT
+            echo "needs_update=true" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stop if no new releases
-        if: steps.check.outputs.exists == 'true'
+        if: steps.check.outputs.needs_update == 'false'
         run: |
-          echo "No new release detected. Exiting."
+          echo "Release already exists with matching assets. Exiting."
 
       - name: Download and rename assets
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         run: |
           mkdir -p assets
           source ./retry.sh
@@ -219,7 +245,7 @@ jobs:
           echo "✓ All assets downloaded successfully"
 
       - name: Verify downloaded assets
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         run: |
           echo "Verifying downloaded assets..."
           
@@ -250,14 +276,19 @@ jobs:
           
           echo "✓ All assets verified successfully"
 
-      - name: Create draft GitHub release
-        if: steps.check.outputs.exists == 'false'
+      - name: Create or update GitHub release
+        if: steps.check.outputs.needs_update == 'true'
         run: |
-          gh release create "${{ steps.forgejo.outputs.release_tag }}" \
-            --title "${{ steps.forgejo.outputs.name }}" \
-            --draft \
-            --notes "Mirrored from Forgejo release. [skip ci]"
-
+          # Check if release already exists
+          if gh release view "${{ steps.forgejo.outputs.release_tag }}" >/dev/null 2>&1; then
+            echo "Release already exists, uploading new assets..."
+          else
+            echo "Creating new draft release..."
+            gh release create "${{ steps.forgejo.outputs.release_tag }}" \
+              --title "${{ steps.forgejo.outputs.name }}" \
+              --draft \
+              --notes "Mirrored from Forgejo release. [skip ci]"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -272,8 +303,9 @@ jobs:
           echo "- **Release Name**: ${{ steps.forgejo.outputs.name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **GitHub Release Tag**: ${{ steps.forgejo.outputs.release_tag }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Release Exists**: ${{ steps.check.outputs.exists }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Needs Update**: ${{ steps.check.outputs.needs_update }}" >> $GITHUB_STEP_SUMMARY
           
-          if [ "${{ steps.check.outputs.exists }}" = "false" ]; then
+          if [ "${{ steps.check.outputs.needs_update }}" = "true" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Assets Mirrored" >> $GITHUB_STEP_SUMMARY
             if [ -d "assets" ]; then
@@ -301,24 +333,27 @@ jobs:
           fi
 
       - name: Upload assets
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         run: |
           gh release upload "${{ steps.forgejo.outputs.release_tag }}" assets/*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Send notification
-        if: steps.check.outputs.exists == 'false'
+        if: steps.check.outputs.needs_update == 'true'
         run: |
           if [ -n "${{ secrets.NOTIFY_WEBHOOK }}" ]; then
+            # Check if this is an update or new release
+            if [ "${{ steps.check.outputs.exists }}" = "true" ]; then
+              message="🚀 Citron release updated: **${{ steps.forgejo.outputs.release_tag }}** (new assets added)"
+            else
+              message="🚀 New Citron release mirrored: **${{ steps.forgejo.outputs.release_tag }}** (draft created)"
+            fi
+            
             curl -X POST \
               -H "Content-Type: application/json" \
-              -d @- \
-              "${{ secrets.NOTIFY_WEBHOOK }}" <<EOF || echo "⚠️  Webhook notification failed (webhook may not be configured)"
-          {
-            "content": "🚀 New Citron release mirrored: **${{ steps.forgejo.outputs.release_tag }}** (draft created)"
-          }
-          EOF
+              -d "{\"content\":\"$message\"}" \
+              "${{ secrets.NOTIFY_WEBHOOK }}" || echo "⚠️  Webhook notification failed (webhook may not be configured)"
           else
             echo "⚠️  Webhook not configured, skipping notification"
           fi
