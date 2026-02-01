@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   mirror:
@@ -119,7 +120,7 @@ jobs:
           echo "API URL: $API_URL"
 
           # Fetch release with retry and error handling
-          release_json=$(retry_command "curl -fsSL '$API_URL'" || echo "ERROR")
+          release_json=$(retry_command "curl -fsSL -H 'User-Agent: GitHub-Actions-Citron-Mirror' '$API_URL'" || echo "ERROR")
           if [ "$release_json" = "ERROR" ] || [ -z "$release_json" ]; then
             echo "❌ Failed to fetch release from Forgejo API after 3 attempts"
             echo "API URL: $API_URL"
